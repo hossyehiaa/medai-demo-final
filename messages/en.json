@@ -1,0 +1,199 @@
+{
+  "nav": {
+    "brand": "medAI",
+    "home": "Home",
+    "chat": "Chat",
+    "screener": "Screener",
+    "evidence": "Evidence",
+    "architecture": "Architecture",
+    "commandHint": "Press ⌘K"
+  },
+  "hero": {
+    "title": "medAI Clinical Assistant",
+    "subtitle": "AI-powered clinical decision support for USPSTF depression and suicide risk screening guidelines",
+    "disclaimer": "For clinical decision support only. Not a substitute for professional medical judgment.",
+    "sampleQuestions": [
+      "What are the USPSTF depression screening recommendations for adults?",
+      "What screening tools are recommended for perinatal depression?",
+      "What are the harms of depression screening?",
+      "How should suicide risk be assessed in older adults?"
+    ]
+  },
+  "chat": {
+    "placeholder": "Ask about USPSTF depression & suicide risk screening…",
+    "send": "Send",
+    "clear": "Clear chat",
+    "thinking": "Analyzing clinical evidence…",
+    "exportReport": "Export Report",
+    "copyLink": "Copy link",
+    "copied": "Copied!",
+    "clinician": "Clinician",
+    "patient": "Patient",
+    "readingLevel": "Reading level",
+    "sessionHistory": "Session History",
+    "noHistory": "No previous sessions",
+    "newChat": "New Chat"
+  },
+  "safety": {
+    "crisisTitle": "Crisis Support",
+    "crisisMessage": "If you are in crisis or having thoughts of suicide, help is available right now.",
+    "crisisAction": "Call or text 988",
+    "crisisSecondary": "Contact your local emergency services",
+    "dosingRefusal": "This system provides screening recommendations only. For medication dosing, please consult a licensed prescriber.",
+    "disclaimer": "This information is based on USPSTF guidance current as of June 2023 and is for clinical decision support only. It is not a substitute for professional medical judgment. Always verify current guidelines and consult appropriate specialists for individual patient care."
+  },
+  "crisis": {
+    "title": "You Are Not Alone",
+    "subtitle": "If you or someone you know is struggling, confidential help is available 24/7.",
+    "lifeline988": "988 Suicide & Crisis Lifeline",
+    "lifeline988Desc": "Call or text 988 — Available 24/7",
+    "lifeline988Number": "988",
+    "chat988": "988 Chat",
+    "chat988Desc": "Online chat at 988lifeline.org/chat",
+    "emergency": "Emergency Services",
+    "emergencyDesc": "Call 911 or go to your nearest emergency department",
+    "breathing": "Breathe with me",
+    "breatheIn": "Breathe in…",
+    "breatheOut": "Breathe out…",
+    "returnChat": "Return to chat"
+  },
+  "features": {
+    "title": "Clinical-Grade Safety & Accuracy",
+    "subtitle": "Every response is grounded in verified USPSTF evidence with multi-layer safety architecture",
+    "safetyGates": {
+      "title": "Safety Gates",
+      "description": "Multi-layer clinical safety: crisis detection (6 languages), dosing refusal, confidence gating"
+    },
+    "verbatim": {
+      "title": "Verbatim Verification",
+      "description": "Every citation verified against source documents with exact quote matching"
+    },
+    "rag": {
+      "title": "RAG Architecture",
+      "description": "Retrieval-Augmented Generation with hybrid search, section priors, and diversity selection"
+    },
+    "multiLLM": {
+      "title": "Multi-LLM Fallback",
+      "description": "OpenRouter cascade: DeepSeek V3 → Llama 3.3 70B → Qwen3 235B → Mock"
+    }
+  },
+  "architecture": {
+    "title": "3-Stage Clinical Pipeline",
+    "subtitle": "Every query passes through safety, retrieval, and generation with full traceability",
+    "stage1": "Safety",
+    "stage2": "Retrieval",
+    "stage3": "Generation",
+    "stats": {
+      "chunks": "728 chunks",
+      "embeddings": "384-dim embeddings",
+      "crisisLanguages": "6 crisis languages",
+      "llmFallbacks": "3 LLM fallbacks"
+    }
+  },
+  "evidence": {
+    "title": "Evidence Panel",
+    "topChunks": "Top Retrieved Chunks",
+    "confidence": "Confidence",
+    "section": "Section",
+    "page": "Page",
+    "source": "Source",
+    "viewSource": "View source",
+    "verified": "Verified",
+    "unverified": "Unverified"
+  },
+  "quality": {
+    "title": "Quality Metrics",
+    "confidence": "Confidence",
+    "model": "Model",
+    "latency": "Latency",
+    "tokens": "Tokens",
+    "citationsVerified": "Citations verified",
+    "ms": "ms"
+  },
+  "pipeline": {
+    "title": "Pipeline Trace",
+    "safety": "Safety",
+    "retrieval": "Retrieval",
+    "rerank": "Rerank",
+    "confidence": "Confidence",
+    "generation": "Generation",
+    "verification": "Verification"
+  },
+  "export": {
+    "title": "Export Report",
+    "markdown": "Markdown",
+    "download": "Download",
+    "copied": "Copied to clipboard!"
+  },
+  "followups": {
+    "title": "Related Questions",
+    "recommendation": "What is the USPSTF recommendation grade?",
+    "population": "What population does this apply to?",
+    "tools": "What screening tools are used?",
+    "harms": "What are the potential harms?",
+    "evidence": "What is the evidence base?",
+    "perinatal": "What about perinatal screening?",
+    "olderAdults": "What about older adults?",
+    "suicideRisk": "How is suicide risk assessed?"
+  },
+  "phq9": {
+    "title": "PHQ-9 Depression Screener",
+    "subtitle": "Patient Health Questionnaire-9 — For screening purposes only",
+    "disclaimer": "This screener is for informational purposes only and does not constitute a diagnosis. Please consult a healthcare professional for clinical evaluation.",
+    "questions": [
+      "Little interest or pleasure in doing things",
+      "Feeling down, depressed, or hopeless",
+      "Trouble falling or staying asleep, or sleeping too much",
+      "Feeling tired or having little energy",
+      "Poor appetite or overeating",
+      "Feeling bad about yourself — or that you are a failure or have let yourself or your family down",
+      "Trouble concentrating on things, such as reading the newspaper or watching television",
+      "Moving or speaking so slowly that other people could have noticed? Or the opposite — being so fidgety or restless that you have been moving around a lot more than usual",
+      "Thoughts that you would be better off dead or of hurting yourself in some way"
+    ],
+    "frequency": "Over the last 2 weeks, how often have you been bothered by:",
+    "notAtAll": "Not at all",
+    "severalDays": "Several days",
+    "moreThanHalf": "More than half the days",
+    "nearlyEveryDay": "Nearly every day",
+    "score": "Score",
+    "severity": "Severity",
+    "minimal": "Minimal depression",
+    "mild": "Mild depression",
+    "moderate": "Moderate depression",
+    "moderatelySevere": "Moderately severe depression",
+    "severe": "Severe depression",
+    "retake": "Retake",
+    "question9Note": "⚠️ If you answered anything other than \"Not at all\" for question 9, please contact a healthcare professional or call 988."
+  },
+  "footer": {
+    "disclaimer": "medAI provides clinical decision support based on USPSTF guidelines. It is not a substitute for professional medical judgment, diagnosis, or treatment. Always verify current guidelines and consult appropriate specialists.",
+    "crisisLine": "Crisis Lifeline: 988",
+    "egyptLine": "Egypt Mental Health: 08008880700",
+    "github": "GitHub",
+    "madeInEgypt": "Made in Egypt 🇪🇬",
+    "copyright": "© {year} medAI — Clinical Decision Support"
+  },
+  "screener": {
+    "title": "Screening Tools",
+    "subtitle": "Validated instruments for depression and suicide risk screening"
+  },
+  "sourceViewer": {
+    "title": "Source Document",
+    "loading": "Loading document…",
+    "page": "Page",
+    "close": "Close"
+  },
+  "commandPalette": {
+    "placeholder": "Type a command or search…",
+    "newChat": "New chat",
+    "exportReport": "Export report",
+    "toggleLang": "Toggle language",
+    "runScreener": "Run PHQ-9 screener",
+    "crisisHelp": "Crisis support"
+  },
+  "accessibility": {
+    "skipToMain": "Skip to main content",
+    "skipToChat": "Skip to chat"
+  }
+}

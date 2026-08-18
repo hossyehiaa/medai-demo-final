@@ -16,13 +16,13 @@ export function SendButton({ onClick, disabled = false, loading = false }: SendB
       disabled={disabled || loading}
       className={`
         relative w-10 h-10 rounded-full flex items-center justify-center
-        bg-teal-600 dark:bg-teal-500
-        text-white
-        shadow-lg shadow-teal-500/20
-        hover:shadow-teal-500/40
+        bg-[#4ECDC4]
+        text-[#0A1128]
+        shadow-lg shadow-[#4ECDC4]/20
+        hover:shadow-[#4ECDC4]/40
         disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
         transition-shadow duration-200 cursor-pointer
-        focus-visible:outline-2 focus-visible:outline-teal-500 focus-visible:outline-offset-2
+        focus-visible:outline-2 focus-visible:outline-[#4ECDC4] focus-visible:outline-offset-2
       `}
       whileHover={!disabled && !loading ? { scale: 1.05 } : {}}
       whileTap={!disabled && !loading ? { scale: 0.95 } : {}}

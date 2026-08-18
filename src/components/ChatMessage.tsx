@@ -70,8 +70,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
         className={`
           flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center
           ${isUser
-            ? 'bg-foreground/10 text-foreground/60'
-            : 'bg-teal-500/10 text-teal-600 dark:text-teal-400'
+            ? 'bg-[#223058] text-[#AAB4D4]'
+            : 'bg-[#4ECDC4]/15 text-[#4ECDC4]'
           }
         `}
       >
@@ -83,8 +83,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
         className={`
           max-w-[85%] sm:max-w-[75%]
           ${isUser
-            ? 'bg-foreground/5 dark:bg-white/5 backdrop-blur-xl border border-foreground/5 dark:border-white/10 rounded-2xl rounded-tr-sm'
-            : 'bg-white/70 dark:bg-white/5 backdrop-blur-xl border border-white/20 dark:border-white/10 rounded-2xl rounded-tl-sm shadow-lg shadow-teal-500/5'
+            ? 'bg-[#131B3F] border border-[#223058] rounded-2xl rounded-tr-sm'
+            : 'bg-[#131B3F] border border-[#223058] rounded-2xl rounded-tl-sm shadow-lg shadow-[#4ECDC4]/5'
           }
           px-4 py-3
         `}
@@ -98,10 +98,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
         {/* 988 Referral */}
         {message.referral988 && (
-          <div className="mb-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20 text-sm text-red-700 dark:text-red-300">
-            <strong className="block mb-1">🆘 Crisis Support</strong>
+          <div className="mb-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20 text-sm text-red-300">
+            <strong className="block mb-1">Crisis Support</strong>
             If you are in crisis or having thoughts of suicide, call or text{' '}
-            <a href="tel:988" className="underline font-semibold">988</a> (US) or your local emergency number.
+            <a href="tel:988" className="underline font-semibold text-red-200">988</a> (US) or your local emergency number.
+            In Egypt: <a href="tel:08008880700" className="underline font-semibold text-red-200">08008880700</a>
           </div>
         )}
 
@@ -112,19 +113,19 @@ export function ChatMessage({ message }: ChatMessageProps) {
             components={{
               h2: ({ children, ...props }) => (
                 <h2
-                  className="text-base font-bold mt-3 mb-1.5 pb-1 border-b border-teal-500/20 text-teal-700 dark:text-teal-300"
+                  className="text-base font-bold mt-3 mb-1.5 pb-1 border-b border-[#4ECDC4]/20 text-[#4ECDC4]"
                   {...props}
                 >
                   {children}
                 </h2>
               ),
               p: ({ children, ...props }) => (
-                <p className="mb-2 leading-7" {...props}>
+                <p className="mb-2 leading-7 text-[#F5F7FB]" {...props}>
                   {children}
                 </p>
               ),
               strong: ({ children, ...props }) => (
-                <strong className="font-semibold text-foreground" {...props}>
+                <strong className="font-semibold text-[#F5F7FB]" {...props}>
                   {children}
                 </strong>
               ),
@@ -133,7 +134,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
                   href={href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-teal-600 dark:text-teal-400 underline underline-offset-2 hover:text-teal-700"
+                  className="text-[#4ECDC4] underline underline-offset-2 hover:text-[#2EA89F]"
                   {...props}
                 >
                   {children}
@@ -141,14 +142,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
               ),
               blockquote: ({ children, ...props }) => (
                 <blockquote
-                  className="border-l-2 border-teal-500/30 pl-3 my-2 text-foreground/70 italic"
+                  className="border-l-2 border-[#4ECDC4]/30 pl-3 my-2 text-[#AAB4D4] italic"
                   {...props}
                 >
                   {children}
                 </blockquote>
               ),
               hr: () => (
-                <hr className="my-3 border-border/50" />
+                <hr className="my-3 border-[#223058]" />
               ),
             }}
           >
@@ -173,7 +174,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
         {/* Disclaimer */}
         {disclaimerText && (
-          <div className="mt-3 pt-2 border-t border-foreground/5 text-xs text-foreground/50 leading-relaxed">
+          <div className="mt-3 pt-2 border-t border-[#223058] text-xs text-[#7683AB] leading-relaxed">
             {disclaimerText}
           </div>
         )}
