@@ -8,6 +8,7 @@
  * - Cosine similarity scoring (hybrid)
  * - Section priors boost (same as MEDAI)
  * - Perinatal/older-adults boost
+ * - Canonical Grade B force-include + confidence boost
  * - Top-K=3 results with confidence scores
  * - Diversity: max 1 chunk per document
  */
@@ -36,10 +37,11 @@ export interface RetrievalResult {
   sectionPrior: number;
   perinatalBoosted: boolean;
   olderAdultsBoosted: boolean;
+  canonicalGradeBBoosted: boolean;
   displayName: string;
 }
 
-// ── Configuration (ported from MEDAI settings.py) ──────────────────
+// ── Configuration (ported from MEDAI' settings.py) ──────────────────
 const TOP_K_FINAL = 3;
 const CONFIDENCE_THRESHOLD = 0.76;
 
@@ -49,7 +51,7 @@ const SECTION_PRIORS: Record<string, number> = {
   "Practice Considerations": 1.15,
   "General": 1.10,
   "Table": 0.85,
-  "Recommendations of Others": 0.70,
+  "Recommendations of Others": 0.45,
   "References": 0.40,
   "Bibliography": 0.30,
   "Metadata": 0.30,
@@ -62,6 +64,8 @@ const PERINATAL_BOOST = 1.25;
 const OLDER_ADULTS_QUERY_KEYWORDS = ["over 65", "older adults", "geriatric", "elderly", "seniors", "gds"];
 const OLDER_ADULTS_CHUNK_KEYWORDS = ["GDS", "Geriatric Depression Scale", "older adults", "65 years", "geriatric", "elderly"];
 const OLDER_ADULTS_BOOST = 1.10;
+
+const CANONICAL_GRADE_B_BOOST = 1.30;
 
 // ── Tokenizer ──────────────────────────────────────────────────────
 
@@ -203,11 +207,9 @@ class HybridSearchEngine {
       const kwOverlap = this.keywordOverlap(queryTokens, i);
 
       // 4. Hybrid score: weighted combination
-      // Cosine captures semantic similarity, BM25 captures lexical relevance, KW overlap is direct match
       const hybridScore = 0.35 * cosineScore + 0.40 * bm25Score + 0.25 * kwOverlap;
 
       // 5. Confidence calibration: map to [0,1] range with better distribution
-      // Use sigmoid to boost scores in the meaningful range
       const calibratedConfidence = 1 / (1 + Math.exp(-8 * (hybridScore - 0.3)));
 
       scores.push({
@@ -223,6 +225,10 @@ class HybridSearchEngine {
 
   getChunk(index: number): Chunk {
     return this.chunks[index];
+  }
+
+  getAllChunks(): Chunk[] {
+    return this.chunks;
   }
 }
 
@@ -279,7 +285,39 @@ function chunkMatchesOlderAdults(chunk: Chunk): boolean {
   return hasPop && hasScreening;
 }
 
-// ── Main retrieval function ────────────────────────────────────────
+// ── Canonical Grade B helpers (mirrors MEDAI retrieval_manager.py) ──
+
+function isDepressionScreeningQuery(query: string): boolean {
+  const qLower = query.toLowerCase();
+  const screeningTerms = ["screen", "screening", "recommend", "grade", "tool", "instrument", "harm", "risk", "evidence"];
+  const depressionTerms = ["depression", "depressive", "mdd", "suicide"];
+  const hasScreening = screeningTerms.some((term) => qLower.includes(term));
+  const hasDepression = depressionTerms.some((term) => qLower.includes(term));
+  const oosTerms = ["dose", "dosing", "mg", "medication", "drug", "sertraline", "fluoxetine",
+    "diet", "herbal", "supplement", "bipolar", "mania", "lithium"];
+  const isOos = oosTerms.some((term) => qLower.includes(term));
+  return hasScreening && hasDepression && !isOos;
+}
+
+function chunkIsCanonicalGradeB(chunk: Chunk): boolean {
+  const text = chunk.text.toLowerCase();
+  const section = chunk.section_name;
+  // Pattern 1: "recommends screening" + "9depression" in a non-low-prior section
+  const hasRecommendsScreening = text.includes("recommends screening") && text.includes("depression");
+  if (hasRecommendsScreening && !["References", "Bibliography", "Metadata", "Table"].includes(section)) {
+    return true;
+  }
+  // Pattern 2: Explicit "grade b" (or PDF artifact "b\ngrade") in key sections
+  const isKeySection = ["Recommendation", "General", "Clinical Considerations", "Practice Considerations"].includes(section);
+  if (isKeySection) {
+    if (text.includes("grade b")) return true;
+    if (text.includes("b\ngrade") || text.includes("b\rgrade")) return true;
+    if (text.includes("grade\nb") || text.includes("grade\r\nb")) return true;
+  }
+  return false;
+}
+
+// ── Main retrieval function ─────────────────────────────────4───────
 
 export async function retrieve(query: string): Promise<{
   results: RetrievalResult[];
@@ -291,16 +329,50 @@ export async function retrieve(query: string): Promise<{
   isOlderAdultsQuery: boolean;
   diversityWarning: boolean;
   uniqueDocumentsCount: number;
+  forcedInclusions: string[];
 }> {
   const eng = await getEngine();
 
-  // Step 1: Get candidate scores
+  // Step 1: Get candidate scores (expanded pool)
   const candidates = eng.search(query, TOP_K_FINAL);
 
   const isPerinatal = isPerinatalQuery(query);
   const isOlderAdults = isOlderAdultsQuery(query);
+  const isDepressionScreening = isDepressionScreeningQuery(query);
 
-  // Step 2: Apply boosts and build results
+  // Step 2: Canonical Grade B force-inclusion
+  const forcedInclusions: string[] = [];
+  const candidateIndices = new Set(candidates.map((c) => c.index));
+
+  if (isDepressionScreening) {
+    const allChunks = eng.getAllChunks();
+    const canonicalCandidates = allChunks
+      .map((chunk, index) => ({ chunk, index }))
+      .filter(({ chunk }) => chunkIsCanonicalGradeB(chunk));
+
+    if (canonicalCandidates.length > 0) {
+      // Rank by token overlap with query, pick top-1
+      const qTokens = new Set(tokenize(query));
+      canonicalCandidates.sort((a, b) => {
+        const scoreA = tokenize(a.chunk.text).filter((t) => qTokens.has(t)).length;
+        const scoreB = tokenize(b.chunk.text).filter((t) => qTokens.has(t)).length;
+        return scoreB - scoreA;
+      });
+      const best = canonicalCandidates[0];
+      if (!candidateIndices.has(best.index)) {
+        // Add the canonical chunk to candidates with a default score
+        candidates.push({
+          index: best.index,
+          score: 0,
+          confidence: 0.5, // Will be boosted
+        });
+        candidateIndices.add(best.index);
+      }
+      forcedInclusions.push(String(best.chunk.chunk_id));
+    }
+  }
+
+  // Step 3: Apply boosts and build results
   const scoredResults: RetrievalResult[] = candidates.map(({ index, score, confidence: rawConfidence }) => {
     const chunk = eng.getChunk(index);
     const displayName = getSourceDisplayName(chunk.document_name);
@@ -308,6 +380,7 @@ export async function retrieve(query: string): Promise<{
     let confidence = rawConfidence;
     let perinatalBoosted = false;
     let olderAdultsBoosted = false;
+    let canonicalGradeBBoosted = false;
 
     // Perinatal boost
     if (isPerinatal && chunkMatchesPerinatal(chunk)) {
@@ -321,9 +394,18 @@ export async function retrieve(query: string): Promise<{
       olderAdultsBoosted = true;
     }
 
+    // Canonical Grade B boost: force-included chunks get 1.30x confidence boost
+    if (isDepressionScreening && forcedInclusions.includes(String(chunk.chunk_id)) && chunkIsCanonicalGradeB(chunk)) {
+      confidence = Math.min(confidence * CANONICAL_GRADE_B_BOOST, 1.0);
+      canonicalGradeBBoosted = true;
+    }
+
     // Section prior boost
     const section = chunk.section_name;
     const textLower = chunk.text.toLowerCase();
+
+    // Check if this is a canonical Grade B forced chunk (exempt from demotion)
+    const isCanonicalForced = forcedInclusions.includes(String(chunk.chunk_id)) && chunkIsCanonicalGradeB(chunk);
 
     let prior = SECTION_PRIORS[section] ?? 1.0;
 
@@ -332,6 +414,7 @@ export async function retrieve(query: string): Promise<{
       prior = 0.40;
     } else if (
       section === "General" &&
+      !isCanonicalForced &&
       ["percent", "screening rate", "namcs", "2014", "statistics", "prevalence", "percent of adults"].some((k) => textLower.includes(k))
     ) {
       prior = 0.50;
@@ -347,6 +430,7 @@ export async function retrieve(query: string): Promise<{
       sectionPrior: Math.round(prior * 10000) / 10000,
       perinatalBoosted,
       olderAdultsBoosted,
+      canonicalGradeBBoosted,
       displayName,
     };
   });
@@ -354,7 +438,7 @@ export async function retrieve(query: string): Promise<{
   // Sort by boosted score descending
   scoredResults.sort((a, b) => b.boostedScore - a.boostedScore);
 
-  // Step 3: Greedy diversity selection — max 1 per document in top-K
+  // Step 4: Greedy diversity selection — max 1 per document in top-K
   const finalResults: RetrievalResult[] = [];
   const droppedDuplicates: RetrievalResult[] = [];
   const seenDocs = new Set<string>();
@@ -409,5 +493,6 @@ export async function retrieve(query: string): Promise<{
     isOlderAdultsQuery: isOlderAdults,
     diversityWarning: hasDiversityWarning,
     uniqueDocumentsCount: uniqueDocsCount,
+    forcedInclusions,
   };
 }
