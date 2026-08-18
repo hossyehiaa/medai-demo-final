@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { History, Plus, Clock, Trash2, MessageSquare } from 'lucide-react';
@@ -24,14 +24,13 @@ const STORAGE_KEY = 'medai-chat-history';
 
 export function HistorySidebar({ isOpen, onClose, onLoadSession, onNewChat }: HistorySidebarProps) {
   const t = useTranslations('chat');
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-
-  useEffect(() => {
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setSessions(JSON.parse(stored));
+      if (stored) return JSON.parse(stored);
     } catch {}
-  }, []);
+    return [];
+  });
 
   const deleteSession = useCallback((id: string) => {
     setSessions((prev) => {

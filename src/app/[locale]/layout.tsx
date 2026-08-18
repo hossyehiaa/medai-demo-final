@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, setRequestLocale } from 'next-intl/server';
 import { notFound } from 'next/navigation';
 import { routing } from '@/i18n/routing';
+import { AuthProvider } from '@/components/AuthProvider';
 
 const inter = Inter({
   variable: '--font-inter',
@@ -66,14 +67,16 @@ export default async function LocaleLayout({
         }}
       >
         <NextIntlClientProvider messages={messages}>
-          {/* Skip links for accessibility */}
-          <a href="#main-content" className="skip-link">
-            {isRTL ? 'تخطي إلى المحتوى الرئيسي' : 'Skip to main content'}
-          </a>
-          <a href="#chat-input" className="skip-link" style={{ left: 'auto', right: 0 }}>
-            {isRTL ? 'تخطي إلى المحادثة' : 'Skip to chat'}
-          </a>
-          <div className="min-h-screen flex flex-col">{children}</div>
+          <AuthProvider>
+            {/* Skip links for accessibility */}
+            <a href="#main-content" className="skip-link">
+              {isRTL ? 'تخطي إلى المحتوى الرئيسي' : 'Skip to main content'}
+            </a>
+            <a href="#chat-input" className="skip-link" style={{ left: 'auto', right: 0 }}>
+              {isRTL ? 'تخطي إلى المحادثة' : 'Skip to chat'}
+            </a>
+            <div className="min-h-screen flex flex-col">{children}</div>
+          </AuthProvider>
         </NextIntlClientProvider>
       </body>
     </html>
