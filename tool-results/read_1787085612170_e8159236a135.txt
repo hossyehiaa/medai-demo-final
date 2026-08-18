@@ -1,0 +1,790 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useRef, useCallback, useEffect } from 'react';
+     4→     4→import { useTranslations, useLocale } from 'next-intl';
+     5→     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→     6→
+     7→     7→// Brand & Layout
+     8→     8→import { BrandLogo } from '@/components/BrandLogo';
+     9→     9→import { ECGLoader } from '@/components/ECGLoader';
+    10→    10→import { ECGDivider } from '@/components/ECGDivider';
+    11→    11→import { LanguageToggle } from '@/components/LanguageToggle';
+    12→    12→
+    13→    13→// Chat Core
+    14→    14→import { ChatMessage, type ChatMessageData } from '@/components/ChatMessage';
+    15→    15→import { SuggestedQueries } from '@/components/SuggestedQueries';
+    16→    16→import { SendButton } from '@/components/SendButton';
+    17→    17→import { ScrollToLatest } from '@/components/ScrollToLatest';
+    18→    18→import { TypingIndicator } from '@/components/TypingIndicator';
+    19→    19→import { StreamCaret } from '@/components/StreamCaret';
+    20→    20→
+    21→    21→// F1: Source Viewer
+    22→    22→import { SourceViewer } from '@/components/SourceViewer';
+    23→    23→
+    24→    24→// F2: Pipeline Trace
+    25→    25→import { PipelineTrace } from '@/components/PipelineTrace';
+    26→    26→
+    27→    27→// F3: Evidence Panel
+    28→    28→import { EvidencePanel, type EvidenceChunk } from '@/components/EvidencePanel';
+    29→    29→
+    30→    30→// F4: Quality HUD
+    31→    31→import { QualityHUD } from '@/components/QualityHUD';
+    32→    32→
+    33→    33→// F5: Crisis Experience
+    34→    34→import { CrisisScreen } from '@/components/CrisisScreen';
+    35→    35→
+    36→    36→// F7: Export Report
+    37→    37→import { ExportReport } from '@/components/ExportReport';
+    38→    38→
+    39→    39→// F8: Smart Follow-ups
+    40→    40→import { SmartFollowups } from '@/components/SmartFollowups';
+    41→    41→
+    42→    42→// F9: PHQ-9 Screener
+    43→    43→import { PHQ9Screener } from '@/components/PHQ9Screener';
+    44→    44→
+    45→    45→// F10: Clinician/Patient Mode
+    46→    46→import { ClinicianPatientToggle } from '@/components/ClinicianPatientToggle';
+    47→    47→
+    48→    48→// F11: Session History
+    49→    49→import { HistorySidebar, saveSession } from '@/components/HistorySidebar';
+    50→    50→
+    51→    51→// F12: Command Palette
+    52→    52→import { CommandPalette } from '@/components/CommandPalette';
+    53→    53→
+    54→    54→// Streaming
+    55→    55→import {
+    56→    56→  streamChat,
+    57→    57→  type StreamMetadata,
+    58→    58→  type StageEvent,
+    59→    59→  type EvidenceChunk as StreamEvidenceChunk,
+    60→    60→  type MetaEvent,
+    61→    61→  type CitationItem,
+    62→    62→} from '@/lib/stream-chat';
+    63→    63→
+    64→    64→// Icons
+    65→    65→import {
+    66→    66→  Shield,
+    67→    67→  Github,
+    68→    68→  History,
+    69→    69→  FileDown,
+    70→    70→  ClipboardList,
+    71→    71→  Command,
+    72→    72→  Share2,
+    73→    73→  Check,
+    74→    74→} from 'lucide-react';
+    75→    75→
+    76→    76→// ── Extended ChatMessageData with full metadata ────────────────────
+    77→    77→interface ExtendedChatMessageData extends ChatMessageData {
+    78→    78→  evidence?: EvidenceChunk[];
+    79→    79→  citations?: CitationItem[];
+    80→    80→  meta?: MetaEvent;
+    81→    81→  stages?: StageEvent[];
+    82→    82→}
+    83→    83→
+    84→    84→// ── F13: Shareable Link ────────────────────────────────────────────
+    85→    85→function generateShareLink(messageId: string, content: string): string {
+    86→    86→  const data = btoa(encodeURIComponent(content.substring(0, 500)));
+    87→    87→  return `${typeof window !== 'undefined' ? window.location.origin : ''}/share?id=${messageId}&d=${data}`;
+    88→    88→}
+    89→    89→
+    90→    90→// ── Main Page Component ─────────────────────────────────────────────
+    91→    91→export default function LocaleChatPage() {
+    92→    92→  const t = useTranslations();
+    93→    93→  const locale = useLocale() as 'en' | 'ar';
+    94→    94→  const isRTL = locale === 'ar';
+    95→    95→
+    96→    96→  // ── Core State ───────────────────────────────────────────────────
+    97→    97→  const [messages, setMessages] = useState<ExtendedChatMessageData[]>([]);
+    98→    98→  const [query, setQuery] = useState('');
+    99→    99→  const [isStreaming, setIsStreaming] = useState(false);
+   100→   100→  const [showScrollButton, setShowScrollButton] = useState(false);
+   101→   101→  const [chatId, setChatId] = useState<string>(() => crypto.randomUUID());
+   102→   102→
+   103→   103→  // ── Feature State ────────────────────────────────────────────────
+   104→   104→  const [showCrisis, setShowCrisis] = useState(false);
+   105→   105→  const [activePipelineStage, setActivePipelineStage] = useState(-1);
+   106→   106→  const [currentEvidence, setCurrentEvidence] = useState<EvidenceChunk[]>([]);
+   107→   107→  const [currentMeta, setCurrentMeta] = useState<MetaEvent | null>(null);
+   108→   108→  const [mode, setMode] = useState<'clinician' | 'patient'>('clinician');
+   109→   109→  const [showScreener, setShowScreener] = useState(false);
+   110→   110→
+   111→   111→  // F11: History sidebar
+   112→   112→  const [showHistory, setShowHistory] = useState(false);
+   113→   113→
+   114→   114→  // F12: Command palette
+   115→   115→  const [showCommandPalette, setShowCommandPalette] = useState(false);
+   116→   116→
+   117→   117→  // F1: Source Viewer
+   118→   118→  const [sourceViewer, setSourceViewer] = useState<{
+   119→   119→    isOpen: boolean;
+   120→   120→    docName: string;
+   121→   121→    page?: number;
+   122→   122→    quote?: string;
+   123→   123→  }>({ isOpen: false, docName: '' });
+   124→   124→
+   125→   125→  // F13: Shareable link
+   126→   126→  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+   127→   127→
+   128→   128→  // ── Refs ─────────────────────────────────────────────────────────
+   129→   129→  const messagesEndRef = useRef<HTMLDivElement>(null);
+   130→   130→  const scrollContainerRef = useRef<HTMLDivElement>(null);
+   131→   131→  const abortControllerRef = useRef<AbortController | null>(null);
+   132→   132→  const inputRef = useRef<HTMLTextAreaElement>(null);
+   133→   133→
+   134→   134→  // ── Auto-scroll ──────────────────────────────────────────────────
+   135→   135→  const scrollToBottom = useCallback(() => {
+   136→   136→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   137→   137→  }, []);
+   138→   138→
+   139→   139→  const handleScroll = useCallback(() => {
+   140→   140→    const el = scrollContainerRef.current;
+   141→   141→    if (!el) return;
+   142→   142→    const isScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 100;
+   143→   143→    setShowScrollButton(isScrolledUp);
+   144→   144→  }, []);
+   145→   145→
+   146→   146→  useEffect(() => {
+   147→   147→    if (!showScrollButton) scrollToBottom();
+   148→   148→  }, [messages, showScrollButton, scrollToBottom]);
+   149→   149→
+   150→   150→  // ── F12: Command Palette Keyboard Shortcut (Ctrl/Cmd+K) ─────────
+   151→   151→  useEffect(() => {
+   152→   152→    const handler = (e: KeyboardEvent) => {
+   153→   153→      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+   154→   154→        e.preventDefault();
+   155→   155→        setShowCommandPalette((prev) => !prev);
+   156→   156→      }
+   157→   157→    };
+   158→   158→    window.addEventListener('keydown', handler);
+   159→   159→    return () => window.removeEventListener('keydown', handler);
+   160→   160→  }, []);
+   161→   161→
+   162→   162→  // ── Handle Sending a Message ─────────────────────────────────────
+   163→   163→  const handleSend = useCallback(
+   164→   164→    async (queryText?: string) => {
+   165→   165→      const q = (queryText || query).trim();
+   166→   166→      if (!q || isStreaming) return;
+   167→   167→
+   168→   168→      setQuery('');
+   169→   169→      setIsStreaming(true);
+   170→   170→      setActivePipelineStage(0);
+   171→   171→      setCurrentEvidence([]);
+   172→   172→      setCurrentMeta(null);
+   173→   173→
+   174→   174→      const userMessage: ExtendedChatMessageData = {
+   175→   175→        id: crypto.randomUUID(),
+   176→   176→        role: 'user',
+   177→   177→        content: q,
+   178→   178→      };
+   179→   179→
+   180→   180→      const assistantId = crypto.randomUUID();
+   181→   181→      const assistantMessage: ExtendedChatMessageData = {
+   182→   182→        id: assistantId,
+   183→   183→        role: 'assistant',
+   184→   184→        content: '',
+   185→   185→        status: 'OK',
+   186→   186→        isStreaming: true,
+   187→   187→        evidence: [],
+   188→   188→        citations: [],
+   189→   189→        stages: [],
+   190→   190→      };
+   191→   191→
+   192→   192→      setMessages((prev) => [...prev, userMessage, assistantMessage]);
+   193→   193→
+   194→   194→      if (abortControllerRef.current) {
+   195→   195→        abortControllerRef.current.abort();
+   196→   196→      }
+   197→   197→      const controller = new AbortController();
+   198→   198→      abortControllerRef.current = controller;
+   199→   199→
+   200→   200→      // Map stage names to indices
+   201→   201→      const stageIndexMap: Record<string, number> = {
+   202→   202→        safety: 0,
+   203→   203→        retrieval: 1,
+   204→   204→        rerank: 2,
+   205→   205→        confidence: 3,
+   206→   206→        generation: 4,
+   207→   207→        verification: 5,
+   208→   208→      };
+   209→   209→
+   210→   210→      await streamChat(
+   211→   211→        q,
+   212→   212→        {
+   213→   213→          onToken: (token) => {
+   214→   214→            setMessages((prev) =>
+   215→   215→              prev.map((msg) =>
+   216→   216→                msg.id === assistantId
+   217→   217→                  ? { ...msg, content: msg.content + token }
+   218→   218→                  : msg,
+   219→   219→              ),
+   220→   220→            );
+   221→   221→          },
+   222→   222→
+   223→   223→          onStage: (stage) => {
+   224→   224→            const idx = stageIndexMap[stage.name] ?? activePipelineStage;
+   225→   225→            setActivePipelineStage(idx);
+   226→   226→            setMessages((prev) =>
+   227→   227→              prev.map((msg) =>
+   228→   228→                msg.id === assistantId
+   229→   229→                  ? { ...msg, stages: [...(msg.stages || []), stage] }
+   230→   230→                  : msg,
+   231→   231→              ),
+   232→   232→            );
+   233→   233→          },
+   234→   234→
+   235→   235→          onEvidence: (chunks) => {
+   236→   236→            setCurrentEvidence(chunks);
+   237→   237→            setMessages((prev) =>
+   238→   238→              prev.map((msg) =>
+   239→   239→                msg.id === assistantId ? { ...msg, evidence: chunks } : msg,
+   240→   240→              ),
+   241→   241→            );
+   242→   242→          },
+   243→   243→
+   244→   244→          onMeta: (meta) => {
+   245→   245→            setCurrentMeta(meta);
+   246→   246→            setMessages((prev) =>
+   247→   247→              prev.map((msg) =>
+   248→   248→                msg.id === assistantId ? { ...msg, meta } : msg,
+   249→   249→              ),
+   250→   250→            );
+   251→   251→          },
+   252→   252→
+   253→   253→          onCitations: (citations) => {
+   254→   254→            setMessages((prev) =>
+   255→   255→              prev.map((msg) =>
+   256→   256→                msg.id === assistantId ? { ...msg, citations } : msg,
+   257→   257→              ),
+   258→   258→            );
+   259→   259→          },
+   260→   260→
+   261→   261→          onComplete: (metadata) => {
+   262→   262→            const isCrisis = metadata.referral988 || metadata.status === 'CRISIS';
+   263→   263→            setMessages((prev) =>
+   264→   264→              prev.map((msg) =>
+   265→   265→                msg.id === assistantId
+   266→   266→                  ? {
+   267→   267→                      ...msg,
+   268→   268→                      isStreaming: false,
+   269→   269→                      status:
+   270→   270→                        (metadata.status as ExtendedChatMessageData['status']) ||
+   271→   271→                        'OK',
+   272→   272→                      content: msg.content || metadata.message || '',
+   273→   273→                      referral988: isCrisis,
+   274→   274→                    }
+   275→   275→                  : msg,
+   276→   276→              ),
+   277→   277→            );
+   278→   278→            setIsStreaming(false);
+   279→   279→            setActivePipelineStage(-1);
+   280→   280→
+   281→   281→            // Show crisis screen for crisis queries
+   282→   282→            if (isCrisis) {
+   283→   283→              setShowCrisis(true);
+   284→   284→            }
+   285→   285→
+   286→   286→            // Save session to history
+   287→   287→            const lastMessages = messages.slice(-4);
+   288→   288→            saveSession({
+   289→   289→              id: chatId,
+   290→   290→              title: q.substring(0, 60),
+   291→   291→              timestamp: Date.now(),
+   292→   292→              messageCount: lastMessages.length + 2,
+   293→   293→              preview: q.substring(0, 80),
+   294→   294→            });
+   295→   295→          },
+   296→   296→
+   297→   297→          onError: (error) => {
+   298→   298→            setMessages((prev) =>
+   299→   299→              prev.map((msg) =>
+   300→   300→                msg.id === assistantId
+   301→   301→                  ? {
+   302→   302→                      ...msg,
+   303→   303→                      isStreaming: false,
+   304→   304→                      content:
+   305→   305→                        msg.content +
+   306→   306→                        `\n\n⚠️ Error: ${error.message}. Please try again.`,
+   307→   307→                      status: 'FAILED_OUTPUT',
+   308→   308→                    }
+   309→   309→                  : msg,
+   310→   310→              ),
+   311→   311→            );
+   312→   312→            setIsStreaming(false);
+   313→   313→            setActivePipelineStage(-1);
+   314→   314→          },
+   315→   315→        },
+   316→   316→        controller.signal,
+   317→   317→        locale,
+   318→   318→      );
+   319→   319→    },
+   320→   320→    [query, isStreaming, locale, chatId, messages, activePipelineStage],
+   321→   321→  );
+   322→   322→
+   323→   323→  // ── Keyboard Handler ─────────────────────────────────────────────
+   324→   324→  const handleKeyDown = useCallback(
+   325→   325→    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+   326→   326→      if (e.key === 'Enter' && !e.shiftKey) {
+   327→   327→        e.preventDefault();
+   328→   328→        handleSend();
+   329→   329→      }
+   330→   330→    },
+   331→   331→    [handleSend],
+   332→   332→  );
+   333→   333→
+   334→   334→  // ── New Chat ─────────────────────────────────────────────────────
+   335→   335→  const handleNewChat = useCallback(() => {
+   336→   336→    if (isStreaming) abortControllerRef.current?.abort();
+   337→   337→    setMessages([]);
+   338→   338→    setChatId(crypto.randomUUID());
+   339→   339→    setIsStreaming(false);
+   340→   340→    setCurrentEvidence([]);
+   341→   341→    setCurrentMeta(null);
+   342→   342→    setActivePipelineStage(-1);
+   343→   343→    inputRef.current?.focus();
+   344→   344→  }, [isStreaming]);
+   345→   345→
+   346→   346→  // ── Auto-resize Textarea ─────────────────────────────────────────
+   347→   347→  const handleInput = useCallback(
+   348→   348→    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+   349→   349→      setQuery(e.target.value);
+   350→   350→      const el = e.target;
+   351→   351→      el.style.height = 'auto';
+   352→   352→      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+   353→   353→    },
+   354→   354→    [],
+   355→   355→  );
+   356→   356→
+   357→   357→  // ── F13: Copy Share Link ─────────────────────────────────────────
+   358→   358→  const handleShare = useCallback(async (msgId: string, content: string) => {
+   359→   359→    const link = generateShareLink(msgId, content);
+   360→   360→    await navigator.clipboard.writeText(link);
+   361→   361→    setCopiedLinkId(msgId);
+   362→   362→    setTimeout(() => setCopiedLinkId(null), 2000);
+   363→   363→  }, []);
+   364→   364→
+   365→   365→  // ── F1: Open Source Viewer ───────────────────────────────────────
+   366→   366→  const handleViewSource = useCallback((docName: string, page: number) => {
+   367→   367→    setSourceViewer({ isOpen: true, docName, page });
+   368→   368→  }, []);
+   369→   369→
+   370→   370→  const hasMessages = messages.length > 0;
+   371→   371→  const lastAssistant = messages
+   372→   372→    .filter((m) => m.role === 'assistant')
+   373→   373→    .pop();
+   374→   374→
+   375→   375→  return (
+   376→   376→    <div className="flex flex-col h-screen relative bg-[#0A1128]">
+   377→   377→      {/* ── Top Navigation ── */}
+   378→   378→      <header className="sticky top-0 z-20 flex items-center justify-between px-4 sm:px-6 py-3 bg-[#0A1128]/80 backdrop-blur-xl border-b border-[#223058]">
+   379→   379→        <div className="flex items-center gap-3">
+   380→   380→          {/* History toggle */}
+   381→   381→          <button
+   382→   382→            onClick={() => setShowHistory(true)}
+   383→   383→            className="p-1.5 rounded-md hover:bg-[#1A2647] text-[#AAB4D4] hover:text-[#4ECDC4] transition-colors"
+   384→   384→            aria-label={t('chat.sessionHistory')}
+   385→   385→          >
+   386→   386→            <History className="w-4 h-4" />
+   387→   387→          </button>
+   388→   388→
+   389→   389→          {/* Brand Logo (F14: ECG) */}
+   390→   390→          <BrandLogo variant="ecg" size={36} />
+   391→   391→        </div>
+   392→   392→
+   393→   393→        <div className="flex items-center gap-2">
+   394→   394→          {/* Safety badge */}
+   395→   395→          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#4ECDC4]/10 text-[#4ECDC4] text-xs font-medium">
+   396→   396→            <Shield className="w-3 h-3" />
+   397→   397→            Safety-Gated
+   398→   398→          </div>
+   399→   399→
+   400→   400→          {/* F10: Clinician/Patient Mode */}
+   401→   401→          <ClinicianPatientToggle mode={mode} onToggle={setMode} />
+   402→   402→
+   403→   403→          {/* F6: Language Toggle */}
+   404→   404→          <LanguageToggle />
+   405→   405→
+   406→   406→          {/* F12: Command Palette trigger */}
+   407→   407→          <button
+   408→   408→            onClick={() => setShowCommandPalette(true)}
+   409→   409→            className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-[#131B3F] border border-[#223058] text-xs text-[#AAB4D4] hover:text-[#F5F7FB] hover:border-[#4ECDC4]/30 transition-colors"
+   410→   410→          >
+   411→   411→            <Command className="w-3 h-3" />
+   412→   412→            <kbd className="text-[10px] text-[#7683AB]">⌘K</kbd>
+   413→   413→          </button>
+   414→   414→
+   415→   415→          {/* GitHub */}
+   416→   416→          <a
+   417→   417→            href="https://github.com/hossyehiaa/medai-demo-final"
+   418→   418→            target="_blank"
+   419→   419→            rel="noopener noreferrer"
+   420→   420→            className="w-8 h-8 rounded-full flex items-center justify-center bg-[#131B3F] border border-[#223058] text-[#AAB4D4] hover:text-[#F5F7FB] hover:border-[#4ECDC4]/30 transition-colors"
+   421→   421→            aria-label="GitHub"
+   422→   422→          >
+   423→   423→            <Github className="w-4 h-4" />
+   424→   424→          </a>
+   425→   425→        </div>
+   426→   426→      </header>
+   427→   427→
+   428→   428→      {/* ── Main Content ── */}
+   429→   429→      <main id="main-content" className="flex-1 flex flex-col overflow-hidden">
+   430→   430→        <div
+   431→   431→          ref={scrollContainerRef}
+   432→   432→          onScroll={handleScroll}
+   433→   433→          className="flex-1 overflow-y-auto chat-scroll"
+   434→   434→        >
+   435→   435→          <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
+   436→   436→            {/* ── Welcome Hero ── */}
+   437→   437→            {!hasMessages && !showScreener && (
+   438→   438→              <motion.div
+   439→   439→                className="flex flex-col items-center justify-center min-h-[60vh] text-center"
+   440→   440→                initial={{ opacity: 0 }}
+   441→   441→                animate={{ opacity: 1 }}
+   442→   442→                transition={{ duration: 0.5 }}
+   443→   443→              >
+   444→   444→                {/* ECG Loader (F14) */}
+   445→   445→                <motion.div
+   446→   446→                  className="mb-6"
+   447→   447→                  initial={{ scale: 0.8, opacity: 0 }}
+   448→   448→                  animate={{ scale: 1, opacity: 1 }}
+   449→   449→                  transition={{ type: 'spring', stiffness: 120, damping: 14, delay: 0.1 }}
+   450→   450→                >
+   451→   451→                  <ECGLoader size={160} />
+   452→   452→                </motion.div>
+   453→   453→
+   454→   454→                <motion.h2
+   455→   455→                  className="text-3xl sm:text-4xl font-bold mb-2"
+   456→   456→                  initial={{ y: 20, opacity: 0 }}
+   457→   457→                  animate={{ y: 0, opacity: 1 }}
+   458→   458→                  transition={{ delay: 0.2 }}
+   459→   459→                >
+   460→   460→                  <span className="bg-gradient-to-r from-[#4ECDC4] to-[#2EA89F] bg-clip-text text-transparent">
+   461→   461→                    {t('hero.title')}
+   462→   462→                  </span>
+   463→   463→                </motion.h2>
+   464→   464→
+   465→   465→                <motion.p
+   466→   466→                  className="text-[#AAB4D4] text-base sm:text-lg mb-8 max-w-md"
+   467→   467→                  initial={{ y: 20, opacity: 0 }}
+   468→   468→                  animate={{ y: 0, opacity: 1 }}
+   469→   469→                  transition={{ delay: 0.3 }}
+   470→   470→                >
+   471→   471→                  {t('hero.subtitle')}
+   472→   472→                </motion.p>
+   473→   473→
+   474→   474→                {/* ECG Divider */}
+   475→   475→                <motion.div
+   476→   476→                  className="w-full max-w-lg mb-6"
+   477→   477→                  initial={{ opacity: 0 }}
+   478→   478→                  animate={{ opacity: 1 }}
+   479→   479→                  transition={{ delay: 0.35 }}
+   480→   480→                >
+   481→   481→                  <ECGDivider />
+   482→   482→                </motion.div>
+   483→   483→
+   484→   484→                {/* Suggested Queries */}
+   485→   485→                <motion.div
+   486→   486→                  initial={{ y: 20, opacity: 0 }}
+   487→   487→                  animate={{ y: 0, opacity: 1 }}
+   488→   488→                  transition={{ delay: 0.4 }}
+   489→   489→                >
+   490→   490→                  <SuggestedQueries onSelect={(q) => handleSend(q)} />
+   491→   491→                </motion.div>
+   492→   492→
+   493→   493→                {/* PHQ-9 Screener button */}
+   494→   494→                <motion.button
+   495→   495→                  onClick={() => setShowScreener(true)}
+   496→   496→                  className="mt-6 flex items-center gap-2 px-4 py-2 rounded-full bg-[#4ECDC4]/10 border border-[#4ECDC4]/30 text-sm text-[#4ECDC4] hover:bg-[#4ECDC4]/20 transition-colors"
+   497→   497→                  initial={{ opacity: 0 }}
+   498→   498→                  animate={{ opacity: 1 }}
+   499→   499→                  transition={{ delay: 0.5 }}
+   500→   500→                  whileTap={{ scale: 0.95 }}
+   501→   501→                >
+   502→   502→                  <ClipboardList className="w-4 h-4" />
+   503→   503→                  {t('phq9.title')}
+   504→   504→                </motion.button>
+   505→   505→
+   506→   506→                {/* Disclaimer */}
+   507→   507→                <motion.p
+   508→   508→                  className="mt-6 text-xs text-[#7683AB] max-w-sm"
+   509→   509→                  initial={{ opacity: 0 }}
+   510→   510→                  animate={{ opacity: 1 }}
+   511→   511→                  transition={{ delay: 0.6 }}
+   512→   512→                >
+   513→   513→                  {t('hero.disclaimer')}
+   514→   514→                </motion.p>
+   515→   515→              </motion.div>
+   516→   516→            )}
+   517→   517→
+   518→   518→            {/* ── PHQ-9 Screener (F9) ── */}
+   519→   519→            {showScreener && !hasMessages && (
+   520→   520→              <motion.div
+   521→   521→                className="max-w-xl mx-auto"
+   522→   522→                initial={{ opacity: 0, y: 20 }}
+   523→   523→                animate={{ opacity: 1, y: 0 }}
+   524→   524→                transition={{ stiffness: 120, damping: 14 }}
+   525→   525→              >
+   526→   526→                <button
+   527→   527→                  onClick={() => setShowScreener(false)}
+   528→   528→                  className="mb-4 text-sm text-[#AAB4D4] hover:text-[#4ECDC4] transition-colors"
+   529→   529→                >
+   530→   530→                  ← {t('chat.chat')}
+   531→   531→                </button>
+   532→   532→                <PHQ9Screener
+   533→   533→                  onComplete={(score, severity) => {
+   534→   534→                    // Optionally send the score as a message
+   535→   535→                  }}
+   536→   536→                />
+   537→   537→              </motion.div>
+   538→   538→            )}
+   539→   539→
+   540→   540→            {/* ── Message List ── */}
+   541→   541→            {hasMessages && (
+   542→   542→              <div className="space-y-6 pb-4">
+   543→   543→                {messages.map((msg) => (
+   544→   544→                  <div key={msg.id}>
+   545→   545→                    <ChatMessage message={msg} />
+   546→   546→
+   547→   547→                    {/* Post-message features for assistant messages */}
+   548→   548→                    {msg.role === 'assistant' && !msg.isStreaming && msg.content && (
+   549→   549→                      <motion.div
+   550→   550→                        className="mt-3 ml-11 space-y-3"
+   551→   551→                        initial={{ opacity: 0, y: 5 }}
+   552→   552→                        animate={{ opacity: 1, y: 0 }}
+   553→   553→                        transition={{ delay: 0.2 }}
+   554→   554→                      >
+   555→   555→                        {/* F3: Evidence Panel */}
+   556→   556→                        {msg.evidence && msg.evidence.length > 0 && (
+   557→   557→                          <EvidencePanel
+   558→   558→                            chunks={msg.evidence}
+   559→   559→                            onViewSource={(doc, page) => handleViewSource(doc, page)}
+   560→   560→                          />
+   561→   561→                        )}
+   562→   562→
+   563→   563→                        {/* F4: Quality HUD + F2: Pipeline Trace */}
+   564→   564→                        <div className="space-y-2">
+   565→   565→                          {msg.stages && msg.stages.length > 0 && (
+   566→   566→                            <PipelineTrace activeStage={5} />
+   567→   567→                          )}
+   568→   568→                          {msg.meta && (
+   569→   569→                            <QualityHUD
+   570→   570→                              confidence={msg.meta.confidence}
+   571→   571→                              model={msg.meta.model}
+   572→   572→                              latencyMs={msg.meta.latency_ms}
+   573→   573→                              tokens={msg.meta.tokens}
+   574→   574→                              citationsVerified={msg.meta.citations_verified}
+   575→   575→                              citationsTotal={msg.meta.citations_total}
+   576→   576→                            />
+   577→   577→                          )}
+   578→   578→                        </div>
+   579→   579→
+   580→   580→                        {/* F8: Smart Follow-ups + F7: Export + F13: Share */}
+   581→   581→                        <div className="flex flex-wrap items-start justify-between gap-3">
+   582→   582→                          <SmartFollowups onFollowUp={(q) => handleSend(q)} />
+   583→   583→                          <div className="flex items-center gap-2 shrink-0">
+   584→   584→                            <ExportReport messages={messages.map((m) => ({ role: m.role, content: m.content }))} />
+   585→   585→                            {/* F13: Shareable link */}
+   586→   586→                            <motion.button
+   587→   587→                              onClick={() => handleShare(msg.id, msg.content)}
+   588→   588→                              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#131B3F] border border-[#223058] rounded-lg text-xs text-[#AAB4D4] hover:text-[#F5F7FB] hover:border-[#4ECDC4]/30 transition-colors"
+   589→   589→                              whileTap={{ scale: 0.95 }}
+   590→   590→                              aria-label={t('chat.copyLink')}
+   591→   591→                            >
+   592→   592→                              {copiedLinkId === msg.id ? (
+   593→   593→                                <>
+   594→   594→                                  <Check className="w-3.5 h-3.5 text-[#4ECDC4]" />
+   595→   595→                                  <span className="text-[#4ECDC4]">{t('chat.copied')}</span>
+   596→   596→                                </>
+   597→   597→                              ) : (
+   598→   598→                                <>
+   599→   599→                                  <Share2 className="w-3.5 h-3.5" />
+   600→   600→                                  <span>{t('chat.copyLink')}</span>
+   601→   601→                                </>
+   602→   602→                              )}
+   603→   603→                            </motion.button>
+   604→   604→                          </div>
+   605→   605→                        </div>
+   606→   606→                      </motion.div>
+   607→   607→                    )}
+   608→   608→                  </div>
+   609→   609→                ))}
+   610→   610→
+   611→   611→                {/* Streaming caret */}
+   612→   612→                {isStreaming &&
+   613→   613→                  messages[messages.length - 1]?.role === 'assistant' && (
+   614→   614→                    <div className="flex items-start gap-3">
+   615→   615→                      <div className="w-8" />
+   616→   616→                      <div className="max-w-[85%] sm:max-w-[75%] px-4 py-1">
+   617→   617→                        <StreamCaret />
+   618→   618→                      </div>
+   619→   619→                    </div>
+   620→   620→                  )}
+   621→   621→
+   622→   622→                {/* Typing indicator */}
+   623→   623→                {isStreaming && messages[messages.length - 1]?.content === '' && (
+   624→   624→                  <TypingIndicator />
+   625→   625→                )}
+   626→   626→
+   627→   627→                {/* Active pipeline trace while streaming */}
+   628→   628→                {isStreaming && activePipelineStage >= 0 && (
+   629→   629→                  <div className="ml-11">
+   630→   630→                    <PipelineTrace activeStage={activePipelineStage} />
+   631→   631→                  </div>
+   632→   632→                )}
+   633→   633→
+   634→   634→                {/* Active evidence while streaming */}
+   635→   635→                {isStreaming && currentEvidence.length > 0 && (
+   636→   636→                  <div className="ml-11">
+   637→   637→                    <EvidencePanel
+   638→   638→                      chunks={currentEvidence}
+   639→   639→                      onViewSource={(doc, page) => handleViewSource(doc, page)}
+   640→   640→                    />
+   641→   641→                  </div>
+   642→   642→                )}
+   643→   643→              </div>
+   644→   644→            )}
+   645→   645→
+   646→   646→            <div ref={messagesEndRef} />
+   647→   647→          </div>
+   648→   648→        </div>
+   649→   649→
+   650→   650→        {/* ── Input Bar ── */}
+   651→   651→        <div className="sticky bottom-0 z-10 px-4 sm:px-6 py-3 bg-[#0A1128]/80 backdrop-blur-xl border-t border-[#223058]">
+   652→   652→          <div className="max-w-3xl mx-auto flex items-end gap-2">
+   653→   653→            {/* PHQ-9 quick launch */}
+   654→   654→            <button
+   655→   655→              onClick={() => setShowScreener(true)}
+   656→   656→              className="shrink-0 p-2.5 rounded-xl bg-[#131B3F] border border-[#223058] text-[#AAB4D4] hover:text-[#4ECDC4] hover:border-[#4ECDC4]/30 transition-colors"
+   657→   657→              aria-label={t('phq9.title')}
+   658→   658→              title={t('phq9.title')}
+   659→   659→            >
+   660→   660→              <ClipboardList className="w-4 h-4" />
+   661→   661→            </button>
+   662→   662→
+   663→   663→            <div className="flex-1 relative">
+   664→   664→              <textarea
+   665→   665→                ref={inputRef}
+   666→   666→                value={query}
+   667→   667→                onChange={handleInput}
+   668→   668→                onKeyDown={handleKeyDown}
+   669→   669→                placeholder={t('chat.placeholder')}
+   670→   670→                rows={1}
+   671→   671→                className="
+   672→   672→                  w-full resize-none rounded-2xl px-4 py-3 pr-4
+   673→   673→                  bg-[#131B3F] border border-[#223058]
+   674→   674→                  focus:border-[#4ECDC4]/40 focus:ring-2 focus:ring-[#4ECDC4]/10
+   675→   675→                  placeholder:text-[#7683AB]
+   676→   676→                  text-sm leading-relaxed text-[#F5F7FB]
+   677→   677→                  transition-all duration-200
+   678→   678→                  outline-none
+   679→   679→                "
+   680→   680→                style={{ maxHeight: '120px' }}
+   681→   681→                disabled={isStreaming}
+   682→   682→                aria-label="Type your clinical question"
+   683→   683→                id="chat-input"
+   684→   684→              />
+   685→   685→            </div>
+   686→   686→            <SendButton
+   687→   687→              onClick={() => handleSend()}
+   688→   688→              disabled={!query.trim() || isStreaming}
+   689→   689→              loading={isStreaming}
+   690→   690→            />
+   691→   691→          </div>
+   692→   692→
+   693→   693→          {/* New chat button */}
+   694→   694→          {hasMessages && (
+   695→   695→            <div className="max-w-3xl mx-auto mt-2 flex justify-center">
+   696→   696→              <button
+   697→   697→                onClick={handleNewChat}
+   698→   698→                className="text-xs text-[#7683AB] hover:text-[#AAB4D4] transition-colors cursor-pointer"
+   699→   699→              >
+   700→   700→                {t('chat.newChat')}
+   701→   701→              </button>
+   702→   702→            </div>
+   703→   703→          )}
+   704→   704→        </div>
+   705→   705→      </main>
+   706→   706→
+   707→   707→      {/* ── Footer ── */}
+   708→   708→      <footer className="px-4 py-3 text-center border-t border-[#223058]/50">
+   709→   709→        <div className="flex items-center justify-center gap-4 text-[10px] text-[#7683AB]">
+   710→   710→          <span>{t('footer.crisisLine')}</span>
+   711→   711→          {locale === 'ar' && <span>{t('footer.egyptLine')}</span>}
+   712→   712→          <span>|</span>
+   713→   713→          <span>{t('footer.madeInEgypt')}</span>
+   714→   714→        </div>
+   715→   715→        <p className="text-[10px] text-[#7683AB]/60 mt-1 max-w-2xl mx-auto leading-relaxed">
+   716→   716→          {t('footer.disclaimer')}
+   717→   717→        </p>
+   718→   718→      </footer>
+   719→   719→
+   720→   720→      {/* ── Overlays ── */}
+   721→   721→
+   722→   722→      {/* F5: Crisis Screen */}
+   723→   723→      <CrisisScreen isVisible={showCrisis} onReturn={() => setShowCrisis(false)} />
+   724→   724→
+   725→   725→      {/* F1: Source Viewer Drawer */}
+   726→   726→      <SourceViewer
+   727→   727→        isOpen={sourceViewer.isOpen}
+   728→   728→        onClose={() => setSourceViewer({ isOpen: false, docName: '' })}
+   729→   729→        docName={sourceViewer.docName}
+   730→   730→        page={sourceViewer.page}
+   731→   731→        quote={sourceViewer.quote}
+   732→   732→      />
+   733→   733→
+   734→   734→      {/* F11: History Sidebar */}
+   735→   735→      <HistorySidebar
+   736→   736→        isOpen={showHistory}
+   737→   737→        onClose={() => setShowHistory(false)}
+   738→   738→        onNewChat={handleNewChat}
+   739→   739→        onLoadSession={() => {
+   740→   740→          setShowHistory(false);
+   741→   741→        }}
+   742→   742→      />
+   743→   743→
+   744→   744→      {/* F12: Command Palette */}
+   745→   745→      <CommandPalette
+   746→   746→        isOpen={showCommandPalette}
+   747→   747→        onClose={() => setShowCommandPalette(false)}
+   748→   748→        onNewChat={handleNewChat}
+   749→   749→        onExport={() => {}}
+   750→   750→        onScreener={() => setShowScreener(true)}
+   751→   751→      />
+   752→   752→
+   753→   753→      {/* Scroll to latest */}
+   754→   754→      <ScrollToLatest visible={showScrollButton} onClick={scrollToBottom} />
+   755→   755→
+   756→   756→      {/* ── PHQ-9 Modal (when chat has messages) ── */}
+   757→   757→      <AnimatePresence>
+   758→   758→        {showScreener && hasMessages && (
+   759→   759→          <motion.div
+   760→   760→            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+   761→   761→            initial={{ opacity: 0 }}
+   762→   762→            animate={{ opacity: 1 }}
+   763→   763→            exit={{ opacity: 0 }}
+   764→   764→          >
+   765→   765→            <div
+   766→   766→              className="absolute inset-0 bg-black/50"
+   767→   767→              onClick={() => setShowScreener(false)}
+   768→   768→            />
+   769→   769→            <motion.div
+   770→   770→              className="relative max-w-xl w-full max-h-[80vh] overflow-y-auto navy-scroll"
+   771→   771→              initial={{ scale: 0.95, y: 20 }}
+   772→   772→              animate={{ scale: 1, y: 0 }}
+   773→   773→              exit={{ scale: 0.95, y: 20 }}
+   774→   774→              transition={{ stiffness: 120, damping: 14 }}
+   775→   775→            >
+   776→   776→              <button
+   777→   777→                onClick={() => setShowScreener(false)}
+   778→   778→                className="absolute top-4 right-4 z-10 p-2 rounded-full bg-[#131B3F] border border-[#223058] text-[#AAB4D4] hover:text-[#F5F7FB] transition-colors"
+   779→   779→              >
+   780→   780→                ✕
+   781→   781→              </button>
+   782→   782→              <PHQ9Screener />
+   783→   783→            </motion.div>
+   784→   784→          </motion.div>
+   785→   785→        )}
+   786→   786→      </AnimatePresence>
+   787→   787→    </div>
+   788→   788→  );
+   789→   789→}
+   790→   790→

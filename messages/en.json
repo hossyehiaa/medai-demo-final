@@ -6,11 +6,14 @@
     "screener": "Screener",
     "evidence": "Evidence",
     "architecture": "Architecture",
-    "commandHint": "Press ⌘K"
+    "commandHint": "Press ⌘K",
+    "logout": "Logout",
+    "getStarted": "Get Started",
+    "tryDemo": "Try Demo"
   },
   "hero": {
-    "title": "medAI Clinical Assistant",
-    "subtitle": "AI-powered clinical decision support for USPSTF depression and suicide risk screening guidelines",
+    "title": "medAI — Clinical Decision Support",
+    "subtitle": "AI-powered decision support grounded in USPSTF guidelines for depression screening and suicide risk assessment",
     "disclaimer": "For clinical decision support only. Not a substitute for professional medical judgment.",
     "sampleQuestions": [
       "What are the USPSTF depression screening recommendations for adults?",
@@ -18,6 +21,91 @@
       "What are the harms of depression screening?",
       "How should suicide risk be assessed in older adults?"
     ]
+  },
+  "landing": {
+    "heroTitle": "medAI — Clinical Decision Support",
+    "heroSubtitle": "AI-powered decision support grounded in USPSTF guidelines for depression screening and suicide risk assessment",
+    "getStarted": "Get Started",
+    "tryDemo": "Try Demo",
+    "storyHeadline": "Medicine with meaning. Design with care.",
+    "storyBody": "Evidence-based AI that shows its work — every answer backed by verbatim USPSTF citations. Built for clinicians who need trusted, traceable guidance.",
+    "feature1Title": "Grounded Answers",
+    "feature1Desc": "Every response sourced from official USPSTF guidelines with verifiable citations",
+    "feature2Title": "Verbatim Citations",
+    "feature2Desc": "Click any claim to see the exact PDF page from the source document",
+    "feature3Title": "Safety Gates",
+    "feature3Desc": "Crisis phrases trigger immediate 988 resources with zero LLM response",
+    "feature4Title": "Source Viewer",
+    "feature4Desc": "Built-in PDF renderer with page navigation for inline source review",
+    "howTitle": "How it works",
+    "step1Title": "Ask",
+    "step1Desc": "Ask a clinical question",
+    "step2Title": "Retrieve",
+    "step2Desc": "AI retrieves relevant USPSTF passages",
+    "step3Title": "Synthesize",
+    "step3Desc": "LLM synthesizes grounded answer",
+    "step4Title": "Verify",
+    "step4Desc": "View source PDFs inline",
+    "footerDisclaimer": "For clinical decision support only. Not a substitute for professional judgment.",
+    "footer988": "988 Suicide & Crisis Lifeline",
+    "footerGitHub": "GitHub"
+  },
+  "login": {
+    "title": "Sign in to medAI",
+    "subtitle": "Access your clinical decision support workspace",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign in",
+    "forgotPassword": "Forgot password?",
+    "backToHome": "Back to Home",
+    "demoHint": "Use physician@medai.ai / demo1234 to explore",
+    "demoHintTitle": "Demo Credentials",
+    "invalidCredentials": "Invalid email or password",
+    "loggingIn": "Signing in…"
+  },
+  "auth": {
+    "physician": "Physician",
+    "patient": "Patient",
+    "guest": "Guest",
+    "guestBanner": "Browsing as guest — sign in to save history"
+  },
+  "tabs": {
+    "chat": "Chat",
+    "evidence": "Evidence Library",
+    "history": "History",
+    "about": "About"
+  },
+  "about": {
+    "title": "About medAI",
+    "scopeTitle": "Scope",
+    "scopeBody": "medAI covers USPSTF depression screening recommendations (Grade B) for the general adult population, pregnant and postpartum persons, and older adults. It also addresses suicide risk assessment as a separate clinical concern.",
+    "methodsTitle": "Methods",
+    "methodsBody": "medAI uses Retrieval-Augmented Generation (RAG) with hybrid TF-IDF + BM25 search over 728 pre-processed chunks from official USPSTF documents. Section priors boost clinically important sections. A canonical Grade B force-include rule ensures the core recommendation is always present. LLM synthesis uses a multi-model cascade via OpenRouter.",
+    "limitationsTitle": "Known Limitations",
+    "limitationsBody": "medAI is based on USPSTF guidelines current as of June 2023 and does not reflect real-time updates. It covers US guidelines only and may not apply to other healthcare systems. It is not a diagnostic tool and should not replace professional clinical judgment.",
+    "criteriaTitle": "Judging Criteria Summary",
+    "criteriaBody": "Innovation: RAG pipeline with section priors and force-include rules. Safety: Multi-layer crisis detection in 6 languages, dosing refusal, confidence gating. Trust: Verbatim citations with inline PDF verification and full pipeline traceability."
+  },
+  "history": {
+    "title": "Conversation History",
+    "empty": "No previous conversations",
+    "open": "Open",
+    "delete": "Delete",
+    "deleteConfirm": "Delete this conversation?",
+    "date": "Date",
+    "preview": "Preview"
+  },
+  "evidenceLib": {
+    "title": "Evidence Library",
+    "subtitle": "Browse the source documents that ground every response",
+    "openPdf": "Open document",
+    "pages": "pages",
+    "card1Title": "USPSTF Clinician Summary (JAMA 2023)",
+    "card1Desc": "Grade B recommendation for depression screening in adults, including perinatal persons and older adults.",
+    "card2Title": "USPSTF Final Evidence Summary (2023)",
+    "card2Desc": "Complete evidence review supporting the Grade B recommendation with harms and benefits analysis.",
+    "card3Title": "AHRQ Evidence Review (USPSTF Bookshelf)",
+    "card3Desc": "Full AHRQ systematic review with 200+ pages of evidence on depression screening effectiveness."
   },
   "chat": {
     "placeholder": "Ask about USPSTF depression & suicide risk screening…",
@@ -171,7 +259,7 @@
     "crisisLine": "Crisis Lifeline: 988",
     "egyptLine": "Egypt Mental Health: 08008880700",
     "github": "GitHub",
-    "madeInEgypt": "Made in Egypt 🇪🇬",
+    "madeInEgypt": "Made in Egypt",
     "copyright": "© {year} medAI — Clinical Decision Support"
   },
   "screener": {
