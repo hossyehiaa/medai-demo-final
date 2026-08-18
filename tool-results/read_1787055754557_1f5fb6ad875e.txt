@@ -1,0 +1,699 @@
+     1→"""
+     2→Guardrails — Input validation and output safety checks.
+     3→
+     4→Enforces medical-domain safety policies:
+     5→- **CRISIS gate**: Detects suicide/self-harm language and returns 988 Lifeline referral
+     6→- **DOSING gate**: Refuses medication dosing queries (out-of-scope for screening guidelines)
+     7→- Blocks prompt-injection attempts
+     8→- Filters disallowed topics (prescriptions, diagnoses)
+     9→- Ensures responses include required disclaimers
+    10→"""
+    11→
+    12→from __future__ import annotations
+    13→import logging
+    14→import re
+    15→from dataclasses import dataclass, field
+    16→from pathlib import Path
+    17→from typing import Any
+    18→import sys
+    19→
+    20→sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+    21→from configs.settings import SOURCE_DISPLAY_NAMES
+    22→
+    23→logger = logging.getLogger(__name__)
+    24→
+    25→
+    26→@dataclass
+    27→class GuardrailResult:
+    28→    """Outcome of a guardrail check."""
+    29→
+    30→    passed: bool
+    31→    status: str = "OK"          # OK | CRISIS | REFUSAL_OOS | BLOCKED | FAILED_OUTPUT
+    32→    reason: str = ""
+    33→    message: str = ""           # User-facing message (for CRISIS / REFUSAL_OOS)
+    34→    flags: list[str] = field(default_factory=list)
+    35→
+    36→
+    37→# ------------------------------------------------------------------
+    38→# CRISIS referral keywords & Personal Distress Detection
+    39→# Supports multilingual crisis detection (EN, ES, FR, ZH, VI, AR)
+    40→# ------------------------------------------------------------------
+    41→CRISIS_KEYWORDS: list[str] = [
+    42→    # English
+    43→    "suicide",
+    44→    "kill myself",
+    45→    "end my life",
+    46→    "self-harm",
+    47→    "want to die",
+    48→    "ending it all",
+    49→    "hurt myself",
+    50→    # Spanish
+    51→    "quiero morir",
+    52→    "hacerme daño",
+    53→    "matarme",
+    54→    "suicidarme",
+    55→    "acabar con mi vida",
+    56→    "sin esperanza",
+    57→    "no tengo salida",
+    58→    "me siento vacio",
+    59→    "me siento vacío",
+    60→    # French
+    61→    "je veux mourir",
+    62→    "me suicider",
+    63→    "désespéré",
+    64→    "desespere",
+    65→    "sans espoir",
+    66→    "je veux en finir",
+    67→    # Chinese
+    68→    "想死",
+    69→    "自杀",
+    70→    "不想活",
+    71→    "感到绝望",
+    72→    "没有希望",
+    73→    "想结束",
+    74→    # Vietnamese
+    75→    "muốn chết",
+    76→    "tự tử",
+    77→    "tuyệt vọng",
+    78→    "không còn hy vọng",
+    79→    "muốn kết thúc",
+    80→    # Arabic
+    81→    "أريد أن أموت",
+    82→    "انتحر",
+    83→    "قتل نفسي",
+    84→    "أذية نفسي",
+    85→    "أشعر باليأس",
+    86→    "لا يوجد أمل",
+    87→    "أريد إنهاء حياتي",
+    88→    "تعبت من الحياة",
+    89→]
+    90→
+    91→# Personal distress markers indicating acute crisis / ideation (Defect 6: multilingual)
+    92→PERSONAL_DISTRESS_PATTERNS: list[str] = [
+    93→    # English
+    94→    r"\bi\b.*\b(feel|want|going to|can'?t|need|wish|should|must|gonna|hopeless|suicidal)\b",
+    95→    r"\b(my|myself|me)\b.*\b(life|death|hopeless|pain|kill|die|end|hurt|suffer)\b",
+    96→    r"\b(feel|feeling)\b.*\b(hopeless|worthless|suicidal|empty|depressed|alone|done)\b",
+    97→    r"\b(kill myself|want to die|end my life|ending it all|hurt myself)\b",
+    98→    # Spanish ('sin esperanza', 'quiero terminar', 'no tengo salida', 'me siento vacío', 'me siento sin esperanza')
+    99→    r"\b(sin esperanza|quiero terminar|no tengo salida|me siento vac[ií]o|me siento sin esperanza|quiero morir|matarme|suicidarme|hacerme da[ñn]o|acabar con mi vida)\b",
+   100→    # Chinese ('感到绝望', '没有希望', '想结束', '不想活')
+   101→    r"(感到绝望|没有希望|想结束|不想活|想死|自杀)",
+   102→    # Arabic ('أشعر باليأس', 'لا يوجد أمل', 'أريد إنهاء حياتي', 'تعبت من الحياة')
+   103→    r"(أشعر باليأس|لا يوجد أمل|أريد إنهاء حياتي|تعبت من الحياة|أريد أن أموت|انتحر|قتل نفسي|أذية نفسي)",
+   104→    # Vietnamese ('tuyệt vọng', 'không còn hy vọng', 'muốn kết thúc')
+   105→    r"(tuyệt vọng|không còn hy vọng|muốn kết thúc|muốn chết|tự tử)",
+   106→    # French ('désespéré', 'sans espoir', 'je veux en finir')
+   107→    r"\b(d[eé]sesp[eé]r[eé]|sans espoir|je veux en finir|je veux mourir|me suicider)\b",
+   108→]
+   109→
+   110→CRISIS_MESSAGE: str = (
+   111→    "⚠️ If you are in crisis or having thoughts of suicide, "
+   112→    "call or text 988 (US) or your local emergency number, "
+   113→    "or go to your nearest emergency department immediately."
+   114→)
+   115→
+   116→CRISIS_RESOURCE_LINE: str = (
+   117→    "⚠️ If you or someone you know is struggling or in crisis, help is available. "
+   118→    "Call or text 988 (US) or contact your local emergency services for immediate, confidential 24/7 support."
+   119→)
+   120→
+   121→# ------------------------------------------------------------------
+   122→# DOSING / Medication refusal keywords & Patterns
+   123→# ------------------------------------------------------------------
+   124→ANTIDEPRESSANT_DRUGS: list[str] = [
+   125→    "sertraline", "zoloft",
+   126→    "fluoxetine", "prozac",
+   127→    "escitalopram", "lexapro",
+   128→    "citalopram", "celexa",
+   129→    "paroxetine", "paxil",
+   130→    "venlafaxine", "effexor",
+   131→    "duloxetine", "cymbalta",
+   132→    "bupropion", "wellbutrin",
+   133→    "mirtazapine", "remeron",
+   134→    "trazodone", "desvenlafaxine", "pristiq",
+   135→    "vilazodone", "vortioxetine", "trintellix",
+   136→    "amitriptyline", "nortriptyline", "imipramine",
+   137→]
+   138→
+   139→DOSING_KEYWORDS: list[str] = [
+   140→    "dose",
+   141→    "dosing",
+   142→    "dosage",
+   143→    "starting dose",
+   144→    "typical dose",
+   145→    "maximum dose",
+   146→    "mg",
+   147→    "milligram",
+   148→    "milligrams",
+   149→    "mg per day",
+   150→    "mg/day",
+   151→    "mg/kg",
+   152→    "tablets",
+   153→    "pills",
+   154→    "how many mg",
+   155→    "how much",
+   156→    "prescribe",
+   157→    "prescription",
+   158→    "titrate",
+   159→    "titration",
+   160→    "schedule",
+   161→    "typical amount",
+   162→]
+   163→
+   164→DOSING_PATTERNS: list[str] = [
+   165→    r"\b(dose|dosing|dosage|amount|mg|milligram|tablets?|pills?|schedule|titrat\w*)\b.*\b(sertraline|zoloft|fluoxetine|prozac|escitalopram|lexapro|citalopram|celexa|paroxetine|paxil|venlafaxine|effexor|duloxetine|cymbalta|bupropion|wellbutrin|mirtazapine|remeron|trazodone)\b",
+   166→    r"\b(sertraline|zoloft|fluoxetine|prozac|escitalopram|lexapro|citalopram|celexa|paroxetine|paxil|venlafaxine|effexor|duloxetine|cymbalta|bupropion|wellbutrin|mirtazapine|remeron|trazodone)\b.*\b(dose|dosing|dosage|amount|mg|milligram|tablets?|pills?|schedule|titrat\w*)\b",
+   167→    r"\bprescribe\s+(?:me\s+)?(?:\d+\s*mg\s+)?(?:sertraline|zoloft|fluoxetine|prozac|escitalopram|lexapro|citalopram|celexa|paroxetine|paxil|venlafaxine|effexor|duloxetine|cymbalta|bupropion|wellbutrin|mirtazapine|remeron|trazodone|medication|antidepressant|drugs?|pills?|tablets?|\d+\s*mg)\b",
+   168→    r"\b\d+\s*mg\s+(?:of\s+)?(sertraline|zoloft|fluoxetine|prozac|escitalopram|lexapro|citalopram|celexa|paroxetine|paxil|venlafaxine|effexor|duloxetine|cymbalta|bupropion|wellbutrin)",
+   169→    r"\btypical amount of\b",
+   170→]
+   171→
+   172→DOSING_REFUSAL_MESSAGE: str = (
+   173→    "This system provides screening recommendations only. "
+   174→    "For medication dosing, please consult a licensed prescriber."
+   175→)
+   176→
+   177→# ------------------------------------------------------------------
+   178→# Prompt-injection & Disallowed topics
+   179→# ------------------------------------------------------------------
+   180→INJECTION_PATTERNS: list[str] = [
+   181→    r"ignore\s+(previous|all)\s+instructions",
+   182→    r"system\s*prompt",
+   183→    r"you\s+are\s+now",
+   184→    r"disregard\s+the\s+above",
+   185→    r"as\s+an\s+ai\s+language\s+model",
+   186→    r"<script",
+   187→    r"DROP\s+TABLE",
+   188→    r"SELECT\s+\*\s+FROM",
+   189→]
+   190→
+   191→DISALLOWED_TOPICS: list[str] = [
+   192→    r"\bhow\s+to\s+make\s+(a\s+)?bomb\b",
+   193→    r"\billegal\s+drugs\b",
+   194→]
+   195→
+   196→REQUIRED_DISCLAIMER_FRAGMENT = "not a substitute for professional medical"
+   197→
+   198→# ------------------------------------------------------------------
+   199→# Professional disclaimer — always appended to every response
+   200→# ------------------------------------------------------------------
+   201→PROFESSIONAL_DISCLAIMER: str = (
+   202→    "This information is based on USPSTF guidance current as of June 2023 "
+   203→    "and is for clinical decision support only. It is not a substitute for "
+   204→    "professional medical judgment. Always verify current guidelines and "
+   205→    "consult appropriate specialists for individual patient care."
+   206→)
+   207→
+   208→
+   209→def _is_personal_crisis(query_lower: str) -> bool:
+   210→    """Check if query contains first-person personal distress markers or acute suicidal ideation."""
+   211→    # Clinical scale / assessment queries are informational provider questions, not personal crisis
+   212→    clinical_terms = [
+   213→        "what scale", "which scale", "what tool", "which tool",
+   214→        "what instrument", "which instrument", "screening tool",
+   215→        "assessment tool", "how to assess", "how to screen",
+   216→        "clinical guideline", "uspstf", "recommendation",
+   217→    ]
+   218→    if any(ct in query_lower for ct in clinical_terms):
+   219→        acute_first_person = [
+   220→            "kill myself", "want to die", "end my life", "quiero morir",
+   221→            "matarme", "suicidarme", "me suicider", "je veux mourir",
+   222→            "想死", "不想活", "muốn chết", "tự tử", "أريد أن أموت", "قتل نفسي"
+   223→        ]
+   224→        return any(af in query_lower for af in acute_first_person)
+   225→
+   226→    for pattern in PERSONAL_DISTRESS_PATTERNS:
+   227→        if re.search(pattern, query_lower, re.IGNORECASE):
+   228→            return True
+   229→    return False
+   230→
+   231→
+   232→def check_input(query: str) -> GuardrailResult:
+   233→    """
+   234→    Validate user input before it reaches the retrieval layer.
+   235→
+   236→    Dual-Mode Crisis Logic:
+   237→      - CRISIS_REFUSAL: Acute personal distress -> 988 referral, NO model answer.
+   238→      - CRISIS_RESOURCE: Informational suicide screening query -> proceed, tag touchpoint.
+   239→      - DOSING refusal: Medication / dosage queries -> out-of-scope refusal.
+   240→      - Prompt injection / disallowed topic blocking.
+   241→    """
+   242→    query_lower = query.lower()
+   243→
+   244→    # ── Gate 1: CRISIS detection (highest priority) ───────────────
+   245→    has_crisis_keyword = any(kw in query_lower for kw in CRISIS_KEYWORDS)
+   246→    is_distress = _is_personal_crisis(query_lower)
+   247→    has_clinical_context = any(
+   248→        term in query_lower
+   249→        for term in [
+   250→            "tool", "instrument", "scale", "screener", "screening",
+   251→            "questionnaire", "protocol", "recommendation", "guideline",
+   252→            "assess", "assessment", "uspstf"
+   253→        ]
+   254→    )
+   255→
+   256→    if is_distress or has_crisis_keyword:
+   257→        if is_distress or not has_clinical_context:
+   258→            logger.warning("CRISIS_REFUSAL triggered for acute crisis query: %s", query)
+   259→            return GuardrailResult(
+   260→                passed=False,
+   261→                status="CRISIS",
+   262→                reason="Personal crisis / suicidal distress detected.",
+   263→                message=CRISIS_MESSAGE,
+   264→                flags=["crisis_refusal"],
+   265→            )
+   266→        else:
+   267→            # Purely informational / clinical query about suicide screening / tools
+   268→            logger.info("CRISIS_RESOURCE flagged for informational query: %s", query)
+   269→            logger.info("CRISIS_RESOURCE flagged for informational query: %s", query)
+   270→
+   271→    # ── Gate 2: DOSING / medication refusal ───────────────────────
+   272→    is_dosing_query = False
+   273→    for pat in DOSING_PATTERNS:
+   274→        if re.search(pat, query_lower, re.IGNORECASE):
+   275→            is_dosing_query = True
+   276→            break
+   277→
+   278→    if not is_dosing_query:
+   279→        has_drug = any(d in query_lower for d in ANTIDEPRESSANT_DRUGS)
+   280→        has_dose_term = any(k in query_lower for k in ["dose", "dosing", "dosage", "amount", "mg", "tablets", "pills", "prescribe", "how many", "how much"])
+   281→        if has_drug and has_dose_term:
+   282→            is_dosing_query = True
+   283→        elif any(k in query_lower for k in ["starting dose", "typical dose", "maximum dose", "mg per day", "mg/day", "mg/kg", "prescribe me 50mg"]):
+   284→            is_dosing_query = True
+   285→        elif query_lower.startswith("what is the dose") or query_lower.startswith("what is the typical amount"):
+   286→            is_dosing_query = True
+   287→
+   288→    if is_dosing_query:
+   289→        logger.warning("DOSING refusal triggered for query: %s", query)
+   290→        return GuardrailResult(
+   291→            passed=False,
+   292→            status="REFUSAL_OOS",
+   293→            reason="Medication dosing query is out of scope.",
+   294→            message=DOSING_REFUSAL_MESSAGE,
+   295→            flags=["dosing_refusal"],
+   296→        )
+   297→
+   298→    # ── Gate 3: Prompt-injection and disallowed topics ────────────
+   299→    flags: list[str] = []
+   300→    if has_crisis_keyword:
+   301→        flags.append("crisis_resource")
+   302→
+   303→    for pattern in INJECTION_PATTERNS:
+   304→        if re.search(pattern, query_lower, re.IGNORECASE):
+   305→            flags.append(f"injection:{pattern}")
+   306→
+   307→    for pattern in DISALLOWED_TOPICS:
+   308→        if re.search(pattern, query_lower, re.IGNORECASE):
+   309→            flags.append(f"disallowed_topic:{pattern}")
+   310→
+   311→    if any(f.startswith("injection:") or f.startswith("disallowed_topic:") for f in flags):
+   312→        logger.warning("Input guardrail triggered: %s", flags)
+   313→        return GuardrailResult(
+   314→            passed=False,
+   315→            status="BLOCKED",
+   316→            reason="Your query was blocked by safety filters. Please rephrase.",
+   317→            message="Your query was blocked by safety filters. Please rephrase.",
+   318→            flags=flags,
+   319→        )
+   320→
+   321→    return GuardrailResult(passed=True, status="OK", flags=flags)
+   322→
+   323→
+   324→def check_output(response: str) -> GuardrailResult:
+   325→    """
+   326→    Validate LLM output before delivering to the user.
+   327→
+   328→    Ensures the response contains the required medical disclaimer
+   329→    and follows the structured 6-section schema.
+   330→    """
+   331→    flags: list[str] = []
+   332→
+   333→    if REQUIRED_DISCLAIMER_FRAGMENT not in response.lower():
+   334→        flags.append("missing_disclaimer")
+   335→
+   336→    schema_result = check_response_schema(response)
+   337→    if not schema_result["all_present"]:
+   338→        for missing in schema_result["missing_sections"]:
+   339→            flags.append(f"missing_section:{missing}")
+   340→
+   341→    # Fix 7: Citation Count and Section Attribution Verification
+   342→    norm_resp = re.sub(r"(?:\[|【|「)Doc:", "[Doc:", response)
+   343→    citation_pattern = re.compile(r'\[Doc:[^\]]+\]', re.IGNORECASE)
+   344→    if len(citation_pattern.findall(norm_resp)) < 4:
+   345→        flags.append("missing_minimum_citations")
+   346→        
+   347→    sections_to_check = ["## Recommendation", "## Population", "## Screening Tool", "## Harms & Considerations", "## Evidence"]
+   348→    for sec in sections_to_check:
+   349→        sec_name = sec.replace("## ", "").lower()
+   350→        match = re.search(rf"^{sec}\s*\n(.*?)(?=^##|\Z)", norm_resp, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+   351→        if match:
+   352→            content = match.group(1).lower()
+   353→            if "[doc:" not in content and "insufficient context" not in content and "limited data" not in content:
+   354→                flags.append(f"MISSING_SECTION_CITATIONS:{sec_name}")
+   355→
+   356→    if flags:
+   357→        logger.warning("Output guardrail triggered: %s", flags)
+   358→        return GuardrailResult(
+   359→            passed=False,
+   360→            status="FAILED_OUTPUT",
+   361→            reason="Response failed output safety checks.",
+   362→            message="Response failed output safety checks.",
+   363→            flags=flags,
+   364→        )
+   365→
+   366→    return GuardrailResult(passed=True, status="OK")
+   367→
+   368→
+   369→# ------------------------------------------------------------------
+   370→# 6-Section Schema Validation
+   371→# ------------------------------------------------------------------
+   372→REQUIRED_SECTIONS: list[str] = [
+   373→    "## Recommendation",
+   374→    "## Population",
+   375→    "## Screening Tool",
+   376→    "## Harms & Considerations",
+   377→    "## Evidence",
+   378→    "## Source",
+   379→]
+   380→
+   381→
+   382→def check_response_schema(response: str) -> dict[str, Any]:
+   383→    """
+   384→    Verify that the response contains all 6 required markdown sections.
+   385→    """
+   386→    present: list[str] = []
+   387→    missing: list[str] = []
+   388→
+   389→    for section in REQUIRED_SECTIONS:
+   390→        header_name = section.replace("## ", "").lower()
+   391→        if re.search(rf"^##\s+{re.escape(header_name)}", response, re.IGNORECASE | re.MULTILINE):
+   392→            present.append(section)
+   393→        elif section.lower() in response.lower():
+   394→            present.append(section)
+   395→        elif header_name == "screening tool" and "## screening tools" in response.lower():
+   396→            present.append(section)
+   397→        elif header_name == "harms & considerations" and ("## harms" in response.lower() or "## harms and considerations" in response.lower()):
+   398→            present.append(section)
+   399→        else:
+   400→            missing.append(section)
+   401→
+   402→    return {
+   403→        "all_present": len(missing) == 0,
+   404→        "present_sections": present,
+   405→        "missing_sections": missing,
+   406→        "section_count": len(present),
+   407→    }
+   408→
+   409→
+   410→# ------------------------------------------------------------------
+   411→# Citation Verification — Hardened verbatim quote checking
+   412→# ------------------------------------------------------------------
+   413→KNOWN_SECTION_HEADINGS: set[str] = {
+   414→    "recommendation",
+   415→    "recommendations",
+   416→    "population",
+   417→    "populations",
+   418→    "screening tool",
+   419→    "screening tools",
+   420→    "harms & considerations",
+   421→    "harms and considerations",
+   422→    "harms",
+   423→    "evidence",
+   424→    "source",
+   425→    "sources",
+   426→    "references",
+   427→    "bibliography",
+   428→    "metadata",
+   429→    "table",
+   430→    "tables",
+   431→    "clinical considerations",
+   432→    "practice considerations",
+   433→    "recommendations of others",
+   434→    "general",
+   435→    "abstract",
+   436→    "introduction",
+   437→    "methods",
+   438→    "results",
+   439→    "discussion",
+   440→    "conclusions",
+   441→    "summary",
+   442→    "table of contents",
+   443→    "list of tables",
+   444→    "list of figures",
+   445→}
+   446→
+   447→
+   448→def is_invalid_or_metadata_quote(quote: str) -> tuple[bool, str]:
+   449→    """
+   450→    Check if a quote is a metadata fragment, table line, bibliography, document title,
+   451→    section heading, or too short (<25 alphanumeric chars).
+   452→    """
+   453→    stripped = quote.strip()
+   454→
+   455→    # (a) Starts with | or ---
+   456→    if stripped.startswith("|") or stripped.startswith("---") or "| --- |" in stripped:
+   457→        return True, "Starts with table markdown syntax or pipes/dashes"
+   458→
+   459→    # (b) Contains PMID: or et al.
+   460→    if "PMID:" in quote or "pmid:" in quote.lower() or "et al." in quote or "et al," in quote:
+   461→        return True, "Contains bibliographic citation fragment (PMID/et al.)"
+   462→
+   463→    # (c) Matches Table TOC pattern
+   464→    if re.search(r"^\s*Table\s+\d+\.", quote, re.IGNORECASE):
+   465→        return True, "Matches Table TOC header pattern"
+   466→
+   467→    # (d) Section heading rejection (Defects 1b & 10)
+   468→    norm_q = re.sub(r"[^\w\s]", "", stripped).lower().strip()
+   469→    if norm_q in KNOWN_SECTION_HEADINGS or stripped.lower() in KNOWN_SECTION_HEADINGS:
+   470→        return True, f"Matches section heading '{stripped}'"
+   471→
+   472→    # Document title rejection (Defects 1b & 10)
+   473→    doc_titles = [v.lower() for v in SOURCE_DISPLAY_NAMES.values()] + [k.lower() for k in SOURCE_DISPLAY_NAMES.keys()]
+   474→    if stripped.lower() in doc_titles or norm_q in [re.sub(r"[^\w\s]", "", dt).lower().strip() for dt in doc_titles]:
+   475→        return True, f"Matches document title '{stripped}'"
+   476→
+   477→    # (e) Strip trailing numerals/citations before length check (Defect 1c)
+   478→    cleaned_quote = re.sub(r"[\s\d]+$", "", stripped)
+   479→
+   480→    # (f) Has <25 alphanumeric characters (Defect 1a: changed to <25)
+   481→    alpha_chars = re.sub(r"[^a-zA-Z0-9]", "", cleaned_quote)
+   482→    if len(alpha_chars) < 25:
+   483→        return True, f"Too short ({len(alpha_chars)} alphanumeric chars < 25)"
+   484→
+   485→    return False, ""
+   486→
+   487→
+   488→def _normalize_citation_text(text: str) -> str:
+   489→    """Normalize text for robust whitespace-independent citation matching (Defect 9)."""
+   490→    # Remove zero-width characters
+   491→    t = re.sub(r"[\u200B\u200C\u200D\uFEFF]", "", text)
+   492→    # Replace non-breaking spaces and multi-whitespace with single space
+   493→    t = re.sub(r"[\s\u00A0]+", " ", t)
+   494→    return t.strip().lower()
+   495→
+   496→
+   497→def verify_citations(
+   498→    llm_response: str,
+   499→    context_chunks: list[dict],
+   500→) -> dict:
+   501→    """
+   502→    Extract and verify every verbatim citation quote in the LLM response.
+   503→
+   504→    - Bracket normalization: accepts `[Doc:`, `【Doc:`, `「Doc:` (Defect 5).
+   505→    - Rejects metadata fragments, table headers, PMIDs, or short fragments (<25 chars).
+   506→    - Ensures that every valid quote appears verbatim in at least one retrieved context chunk.
+   507→    """
+   508→    # Defect 5: Bracket normalization
+   509→    if "【Doc:" in llm_response or "「Doc:" in llm_response:
+   510→        logger.warning("verify_citations: non-standard bracket detected in response (normalized 【/「 to [)")
+   511→    norm_llm_response = re.sub(r"(?:\[|【|「)Doc:", "[Doc:", llm_response)
+   512→
+   513→    quote_pattern = re.compile(r'Quote:\s*"([^"]+)"', re.IGNORECASE)
+   514→    quotes = quote_pattern.findall(norm_llm_response)
+   515→
+   516→    if not quotes:
+   517→        return {
+   518→            "status": "CITATION_VERIFICATION_FAILED",
+   519→            "verified_quotes": 0,
+   520→            "total_quotes": 0,
+   521→            "unverified_quotes": ["No citations found in response."],
+   522→            "detail": "Response contains zero citation quotes.",
+   523→        }
+   524→
+   525→    corpus_texts = [_normalize_citation_text(c.get("text", "")) for c in context_chunks]
+   526→
+   527→    verified: list[str] = []
+   528→    unverified: list[str] = []
+   529→
+   530→    for quote in quotes:
+   531→        # Step 1: Reject metadata-only or short quotes
+   532→        is_invalid, reason = is_invalid_or_metadata_quote(quote)
+   533→        if is_invalid:
+   534→            unverified.append(f"{quote} (REJECTED: {reason})")
+   535→            continue
+   536→
+   537→        # Step 2: Check normalized verbatim match in context corpus (Defect 9)
+   538→        norm_quote = _normalize_citation_text(quote)
+   539→        norm_quote_clean = re.sub(r"\s*\d+$", "", norm_quote).strip()
+   540→
+   541→        found = False
+   542→        for corpus in corpus_texts:
+   543→            if norm_quote in corpus or norm_quote_clean in corpus:
+   544→                found = True
+   545→                break
+   546→            # Token split / whitespace-stripped fallback (e.g. In2016,theUS...)
+   547→            alpha_quote = re.sub(r"[^a-z0-9]", "", norm_quote_clean)
+   548→            alpha_corpus = re.sub(r"[^a-z0-9]", "", corpus)
+   549→            if len(alpha_quote) >= 20 and alpha_quote in alpha_corpus:
+   550→                found = True
+   551→                break
+   552→
+   553→        if found:
+   554→            verified.append(quote)
+   555→        else:
+   556→            unverified.append(quote)
+   557→
+   558→    status = "OK" if len(unverified) == 0 and len(verified) > 0 else "CITATION_VERIFICATION_FAILED"
+   559→
+   560→    return {
+   561→        "status": status,
+   562→        "verified_quotes": len(verified),
+   563→        "total_quotes": len(quotes),
+   564→        "unverified_quotes": unverified,
+   565→    }
+   566→
+   567→
+   568→# ------------------------------------------------------------------
+   569→# Post-Generation Faithfulness & Caveat Verification
+   570→# ------------------------------------------------------------------
+   571→def check_faithfulness(
+   572→    query: str,
+   573→    response: str,
+   574→    context_chunks: list[dict],
+   575→) -> dict[str, Any]:
+   576→    """
+   577→    Perform post-generation clinical faithfulness checks:
+   578→      - Caveat preservation ("no evidence on frequency", "only 1 study", "uncertainty")
+   579→      - External organization attribution (AAFP/ICSI distinct from USPSTF)
+   580→      - Scope gap acknowledgment (adolescents/children -> adults only)
+   581→      - Instrument distinction (PHQ-9/EPDS are depression tools, not primary suicide tools)
+   582→      - Per-claim grounding check (Defect 4)
+   583→      - Claim-citation relevance check (Defect 8)
+   584→    """
+   585→    flags: list[str] = []
+   586→    resp_lower = response.lower()
+   587→    q_lower = query.lower()
+   588→
+   589→    norm_response = re.sub(r"(?:\[|【|「)Doc:", "[Doc:", response)
+   590→
+   591→    # 1. Caveat preservation
+   592→    caveat_patterns = ["no evidence", "insufficient", "uncertainty", "only 1 study", "one study", "remains uncertain", "few studies", "limited evidence"]
+   593→    context_has_caveat = any(
+   594→        any(pat in c.get("text", "").lower() for pat in caveat_patterns)
+   595→        for c in context_chunks
+   596→    )
+   597→    if context_has_caveat:
+   598→        caveat_words = ["insufficient", "uncertain", "limited", "no evidence", "caveat", "gap", "one study", "only 1 study", "lacking", "absence of evidence"]
+   599→        has_caveat_word = any(cw in resp_lower for cw in caveat_words)
+   600→        if not has_caveat_word:
+   601→            flags.append("CAVEAT_SUPPRESSED")
+   602→
+   603→    # 2. External organization attribution
+   604→    orgs = ["AAFP", "ICSI", "APA", "ACCP", "ACOG", "AWHONN", "VA/DoD", "NICE"]
+   605→    context_has_org = any(
+   606→        any(org.lower() in c.get("text", "").lower() for org in orgs)
+   607→        for c in context_chunks
+   608→    )
+   609→    if context_has_org:
+   610→        distinction_phrases = ["distinct from uspstf", "aligns with but is distinct", "recommendation, distinct", "recommendations of other", "other organization", "aafp recommends"]
+   611→        has_distinction = any(dp in resp_lower for dp in distinction_phrases) or ("distinct" in resp_lower and "uspstf" in resp_lower)
+   612→        if not has_distinction:
+   613→            flags.append("ATTRIBUTION_MISSING")
+   614→
+   615→    # 3. Scope gap acknowledgment
+   616→    is_pediatric_query = any(w in q_lower for w in ["adolescent", "adolescents", "teen", "teens", "child", "children", "pediatric", "youth"])
+   617→    if is_pediatric_query:
+   618→        scope_phrases = ["does not address", "adults only", "18 years and older", "not address children", "not address adolescent", "limited to adult"]
+   619→        has_scope_ack = any(sp in resp_lower for sp in scope_phrases)
+   620→        if not has_scope_ack:
+   621→            flags.append("SCOPE_UNACKNOWLEDGED")
+   622→
+   623→    # 4. Instrument distinction
+   624→    if "suicide" in q_lower:
+   625→        if "phq-9 is a suicide" in resp_lower or "epds is a suicide" in resp_lower:
+   626→            flags.append("INSTRUMENT_CONFLATED")
+   627→
+   628→    # 5. Per-claim grounding check (Defect 4)
+   629→    # Check that every substantive sentence >60 chars outside Evidence/Source has [Doc: within 100 chars
+   630→    sections = re.split(r"(?=^##\s+)", norm_response, flags=re.MULTILINE)
+   631→    for sec_block in sections:
+   632→        sec_lower = sec_block.lower()
+   633→        if sec_lower.startswith("## evidence") or sec_lower.startswith("## source"):
+   634→            continue
+   635→
+   636→        lines = [l.strip() for l in sec_block.split("\n") if l.strip() and not l.strip().startswith("#")]
+   637→        for line in lines:
+   638→            clean_line = re.sub(r"^[*\-\d\.\s]+", "", re.sub(r"\[Doc:[^\]]+\]", "", line)).strip()
+   639→            if len(clean_line) > 60 and not clean_line.startswith("⚠️") and "988" not in clean_line and "not a substitute for professional" not in clean_line.lower():
+   640→                line_idx = sec_block.find(line)
+   641→                window = sec_block[max(0, line_idx - 100):min(len(sec_block), line_idx + len(line) + 100)]
+   642→                if "[Doc:" not in window and "[doc:" not in window.lower():
+   643→                    flags.append("UNGROUNDED_CLAIM")
+   644→                    break
+   645→
+   646→    # 6. Claim-citation relevance check (Defect 8)
+   647→    pop_section_match = re.search(r"## Population\s*\n(.*?)(?=^##|\Z)", norm_response, re.DOTALL | re.MULTILINE)
+   648→    if pop_section_match:
+   649→        pop_text = pop_section_match.group(1)
+   650→        pop_quotes = re.findall(r'Quote:\s*"([^"]+)"', pop_text, re.IGNORECASE)
+   651→        for pq in pop_quotes:
+   652→            for c in context_chunks:
+   653→                c_text = c.get("text", "").lower()
+   654→                c_sec = c.get("section_name", "").lower()
+   655→                if pq.lower() in c_text or re.sub(r"[^\w\s]", "", pq.lower()) in re.sub(r"[^\w\s]", "", c_text):
+   656→                    if "frequency" in c_sec or "screening interval" in c_sec:
+   657→                        flags.append("MISMATCHED_CITATION")
+   658→                        break
+   659→
+   660→    # 7. Anti-Recycling and Section-Quote Topical Alignment (Day 3.8 Fix 5 & Day 4 Fix 2 & 6)
+   661→    citation_pattern = re.compile(r'\[Doc:[^\]]+\]', re.IGNORECASE)
+   662→    full_citations = citation_pattern.findall(norm_response)
+   663→    from collections import Counter
+   664→    cit_counts = Counter([re.sub(r"[^\w\s]", "", c.lower().strip()) for c in full_citations])
+   665→    
+   666→    if any(count > 2 for count in cit_counts.values()):
+   667→        flags.append("CITATION_RECYCLING")
+   668→        
+   669→    if len(cit_counts) < 4:
+   670→        flags.append("INSUFFICIENT_CITATION_DIVERSITY")
+   671→
+   672→    # (a) Population section quote must contain population/age terms
+   673→    if pop_section_match:
+   674→        pop_text = pop_section_match.group(1)
+   675→        pop_quotes = re.findall(r'Quote:\s*"([^"]+)"', pop_text, re.IGNORECASE)
+   676→        pop_terms = ["adult", "age", "18", "pregnant", "postpartum", "older", "geriatric", "elderly", "women", "population", "person", "individual", "perinatal"]
+   677→        for pq in pop_quotes:
+   678→            if not any(term in pq.lower() for term in pop_terms):
+   679→                flags.append("CITATION_RECYCLING")
+   680→                break
+   681→
+   682→    # (b) Screening Tool section quote must mention instruments or screening
+   683→    tool_section_match = re.search(r"## Screening Tool\s*\n(.*?)(?=^##|\Z)", norm_response, re.DOTALL | re.MULTILINE)
+   684→    if tool_section_match:
+   685→        tool_text = tool_section_match.group(1)
+   686→        tool_quotes = re.findall(r'Quote:\s*"([^"]+)"', tool_text, re.IGNORECASE)
+   687→        tool_terms = ["tool", "instrument", "scale", "phq", "epds", "gds", "bdi", "ces-d", "screen", "questionnaire", "ham-d", "madrs", "accuracy", "test"]
+   688→        for tq in tool_quotes:
+   689→            if not any(term in tq.lower() for term in tool_terms):
+   690→                flags.append("CITATION_RECYCLING")
+   691→                break
+   692→
+   693→    passed = len(flags) == 0
+   694→    return {
+   695→        "passed": passed,
+   696→        "flags": flags,
+   697→        "detail": f"Faithfulness checks {'passed' if passed else 'failed: ' + ', '.join(flags)}",
+   698→    }
+   699→
