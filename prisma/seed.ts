@@ -1,13 +1,8 @@
-// Seed demo users (run at build time / locally)
+// Seed demo users on Neon Postgres
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
-import path from "path";
 
-const prisma = new PrismaClient({
-  datasources: {
-    db: { url: "file:" + path.join(process.cwd(), "prisma", "db", "medai.db") },
-  },
-});
+const prisma = new PrismaClient();
 
 function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex");
@@ -23,20 +18,20 @@ async function seedUsers() {
   for (const user of users) {
     await prisma.user.upsert({
       where: { email: user.email },
-      update: { password: user.password, role: user.role },
+      update: { password: user.password, role: user.role, name: user.name },
       create: user,
     });
   }
 
-  console.log("Seeded demo users:");
-  console.log("- admin@medai.ai / medAI2026 (admin)");
-  console.log("- doctor@medai.ai / medAI2026 (admin)");
-  console.log("- patient@medai.ai / medAI2026 (user)");
+  console.log("\n✅ Seeded demo users on Neon:");
+  console.log("   admin@medai.ai / medAI2026 (admin)");
+  console.log("   doctor@medai.ai / medAI2026 (admin)");
+  console.log("   patient@medai.ai / medAI2026 (user)\n");
 }
 
 seedUsers()
   .catch((e) => {
-    console.error(e);
+    console.error("❌ Seed error:", e.message);
     process.exit(1);
   })
   .finally(async () => {
