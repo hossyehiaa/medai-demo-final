@@ -1,102 +1,60 @@
+// NextAuth v5 Configuration with Credentials provider + JWT sessions
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import crypto from "crypto";
+import { db } from "./db";
 
-// ── SHA-256 helper ────────────────────────────────────────────────
-async function sha256(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+// SHA-256 hash helper (matches seed script)
+export function hashPassword(password: string): string {
+  return crypto.createHash("sha256").update(password).digest("hex");
 }
 
-// ── Demo Users ────────────────────────────────────────────────────
-// Passwords are hashed at startup
-const DEMO_USERS_RAW = [
-  {
-    id: "1",
-    email: "physician@medai.ai",
-    password: "demo1234",
-    role: "physician",
-    name: "Dr. Sarah Chen",
-  },
-  {
-    id: "2",
-    email: "patient@medai.ai",
-    password: "demo1234",
-    role: "patient",
-    name: "John Doe",
-  },
-];
-
-let DEMO_USERS: {
-  id: string;
-  email: string;
-  passwordHash: string;
-  role: string;
-  name: string;
-}[] = [];
-
-// Hash passwords at first call
-let initialized = false;
-async function ensureInitialized() {
-  if (initialized) return;
-  DEMO_USERS = await Promise.all(
-    DEMO_USERS_RAW.map(async (u) => ({
-      ...u,
-      passwordHash: await sha256(u.password),
-    }))
-  );
-  initialized = true;
-}
-
-// ── NextAuth v5 Configuration ────────────────────────────────────
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true,
   providers: [
     Credentials({
+      name: "Credentials",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      authorize: async (credentials) => {
+      async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        await ensureInitialized();
-
-        const email = credentials.email as string;
-        const password = credentials.password as string;
-        const inputHash = await sha256(password);
-
-        const user = DEMO_USERS.find(
-          (u) => u.email === email && u.passwordHash === inputHash
-        );
-
+        const user = await db.user.findUnique({
+          where: { email: (credentials.email as string).toLowerCase().trim() },
+        });
         if (!user) return null;
+
+        const hashed = hashPassword(credentials.password as string);
+        if (hashed !== user.password) return null;
 
         return {
           id: user.id,
           email: user.email,
-          name: user.name,
+          name: user.name || undefined,
           role: user.role,
         };
       },
     }),
   ],
-  session: { strategy: "jwt" },
-  pages: { signIn: "/login" },
   callbacks: {
-    jwt: async ({ token, user }) => {
+    async jwt({ token, user }) {
       if (user) {
-        token.role = (user as { role?: string }).role;
+        token.role = user.role;
         token.id = user.id;
       }
       return token;
     },
-    session: async ({ session, token }) => {
+    async session({ session, token }) {
       if (session.user) {
-        (session.user as { role?: string }).role = token.role as string;
-        (session.user as { id?: string }).id = token.id as string;
+        session.user.role = (token.role as string) || "user";
+        session.user.id = (token.id as string) || "";
       }
       return session;
     },
   },
+  pages: { signIn: "/login" },
+  session: { strategy: "jwt" },
+  secret: process.env.AUTH_SECRET || "medai-dev-secret-2026",
 });

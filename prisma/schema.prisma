@@ -1,32 +1,35 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// medAI Full App Schema with Auth + History
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = "file:./db/medai.db"
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String    // SHA-256 hashed
+  name          String?
+  role          String    @default("user") // "admin" | "user" | "guest"
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  queries       Query[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model Query {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  query         String
+  response      String    @default("")
+  status        String    @default("SUCCESS") // SUCCESS | CRISIS | REFUSAL | ERROR
+  citations     String    @default("[]") // JSON array
+  wellnessNotes String    @default("[]") // JSON array
+  createdAt     DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
 }

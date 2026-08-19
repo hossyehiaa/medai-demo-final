@@ -42,12 +42,19 @@ export interface CitationItem {
   quote: string;
 }
 
+export interface WellnessNoteItem {
+  source: string;
+  url: string;
+  quote: string;
+}
+
 export interface StreamCallbacks {
   onStage?: (stage: StageEvent) => void;
   onEvidence?: (chunks: EvidenceChunk[]) => void;
   onMeta?: (meta: MetaEvent) => void;
   onToken: (token: string) => void;
   onCitations?: (citations: CitationItem[]) => void;
+  onWellness?: (notes: WellnessNoteItem[]) => void;
   onComplete: (metadata: { status: string; disclaimer?: string; referral988?: boolean; flags?: string[]; message?: string }) => void;
   onError: (error: Error) => void;
 }
@@ -141,6 +148,10 @@ export async function streamChat(
 
             case 'citations':
               callbacks.onCitations?.(parsed.items || []);
+              break;
+
+            case 'wellness':
+              callbacks.onWellness?.(parsed.notes || []);
               break;
 
             case 'done':

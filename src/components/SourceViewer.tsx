@@ -1,271 +1,108 @@
-'use client';
+"use client";
 
-import { useState, useCallback, useEffect } from 'react';
-import { useTranslations, useLocale } from 'next-intl';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronLeft, ChevronRight, FileText, ExternalLink } from 'lucide-react';
-import { getPDFDisplayName, getPDFMapping, getPDFRemoteUrl } from '@/lib/pdfMap';
+// Source Viewer — right drawer that opens the cited PDF at the exact page.
+// Local-first (/public/pdfs) with GitHub raw fallback via the pdfMap.
+import { useEffect, useState } from "react";
+import { X, ExternalLink } from "lucide-react";
+import { getPDFMapping } from "@/lib/pdfMap";
+import { useI18n } from "@/lib/i18n";
 
-interface SourceViewerProps {
-  isOpen: boolean;
-  onClose: () => void;
+export interface ViewerTarget {
   docName: string;
-  page?: number;
-  quote?: string;
+  page: number;
 }
 
-export function SourceViewer({ isOpen, onClose, docName, page, quote }: SourceViewerProps) {
-  const t = useTranslations('sourceViewer');
-  const locale = useLocale() as 'en' | 'ar';
-  const isRTL = locale === 'ar';
-  const [pdfPage, setPdfPage] = useState(page || 1);
-  const [numPages, setNumPages] = useState<number | null>(null);
-  const [DocumentComponent, setDocumentComponent] = useState<React.ComponentType<Record<string, unknown>> | null>(null);
-  const [PageComponent, setPageComponent] = useState<React.ComponentType<Record<string, unknown>> | null>(null);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfError, setPdfError] = useState<string | null>(null);
-  const [tryingRemote, setTryingRemote] = useState(false);
-
-  // Resolve PDF source: try local first, fallback to remote
-  useEffect(() => {
-    if (!isOpen) return;
-    setPdfError(null);
-    setTryingRemote(false);
-
-    const mapping = getPDFMapping(docName);
-    if (!mapping) {
-      setPdfError('not_found');
-      return;
-    }
-
-    // Try local path first
-    const tryLocal = async () => {
-      try {
-        const headResp = await fetch(mapping.localPath, { method: 'HEAD' });
-        if (headResp.ok) {
-          setPdfUrl(mapping.localPath);
-          return;
-        }
-      } catch {
-        // Local fetch failed, try remote
-      }
-      // Fallback to remote
-      tryRemote();
-    };
-
-    const tryRemote = async () => {
-      setTryingRemote(true);
-      try {
-        const remoteUrl = getPDFRemoteUrl(docName);
-        if (remoteUrl) {
-          const headResp = await fetch(remoteUrl, { method: 'HEAD' });
-          if (headResp.ok) {
-            setPdfUrl(remoteUrl);
-            return;
-          }
-        }
-      } catch {
-        // Remote also failed
-      }
-      setPdfError('unavailable');
-    };
-
-    tryLocal();
-  }, [isOpen, docName]);
-
-  // Dynamic import of react-pdf with SSR: false + worker fix
-  useEffect(() => {
-    if (!isOpen) return;
-    import('react-pdf').then((mod) => {
-      try {
-        // Try local worker first (works on Vercel with ?url import)
-        mod.pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs`;
-      } catch {
-        // Fallback: disable worker
-        mod.pdfjs.GlobalWorkerOptions.workerSrc = '';
-      }
-      setDocumentComponent(() => mod.Document);
-      setPageComponent(() => mod.Page);
-    }).catch(() => {
-      setPdfError('viewer_failed');
-    });
-  }, [isOpen]);
+export default function SourceViewer({
+  target,
+  onClose,
+}: {
+  target: ViewerTarget | null;
+  onClose: () => void;
+}) {
+  const { t, lang } = useI18n();
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (page) setPdfPage(page);
-  }, [page]);
+    setFailed(false);
+  }, [target]);
 
-  const onDocumentLoadSuccess = useCallback(({ numPages: n }: { numPages: number }) => {
-    setNumPages(n);
-    setPdfError(null);
-  }, []);
+  if (!target) return null;
 
-  const onDocumentLoadError = useCallback(() => {
-    // If local failed, try remote
-    const remoteUrl = getPDFRemoteUrl(docName);
-    if (remoteUrl && pdfUrl !== remoteUrl) {
-      setTryingRemote(true);
-      setPdfUrl(remoteUrl);
-    } else {
-      setPdfError('unavailable');
-    }
-  }, [docName, pdfUrl]);
-
-  const displayName = getPDFDisplayName(docName, locale);
-  const mapping = getPDFMapping(docName);
+  const mapping = getPDFMapping(target.docName);
+  const page = Math.max(1, target.page || 1);
+  const localSrc = mapping ? `${mapping.localPath}#page=${page}` : null;
+  const remoteSrc = mapping ? mapping.remotePath : null;
+  const displayName = mapping
+    ? lang === "ar"
+      ? mapping.displayNameAr
+      : mapping.displayName
+    : target.docName;
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            className="fixed inset-0 bg-black/60 z-40"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-          />
-
-          {/* Drawer — slides from right in LTR, left in RTL */}
-          <motion.div
-            className={`fixed top-0 bottom-0 z-50 w-full max-w-lg bg-navy-800 border-${
-              isRTL ? 'l' : 'r'
-            } border-navy-600 flex flex-col`}
-            style={{ [isRTL ? 'left' : 'right']: 0 }}
-            initial={{ x: isRTL ? -400 : 400, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: isRTL ? -400 : 400, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 120, damping: 14 }}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-navy-600">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-teal-400" />
-                <h2 className="text-text-primary font-semibold text-sm">{displayName}</h2>
-                {tryingRemote && (
-                  <span className="text-xs text-text-muted ml-1">(remote)</span>
-                )}
-              </div>
-              <button
-                onClick={onClose}
-                className="p-1 rounded-md hover:bg-navy-700 text-text-secondary hover:text-text-primary transition-colors"
-                aria-label={t('close')}
-              >
-                <X className="w-5 h-5" />
-              </button>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={onClose}>
+      <div
+        className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        dir="ltr"
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-wider text-teal">
+              {t("sourceViewer")}
             </div>
-
-            {/* Quote highlight */}
-            {quote && (
-              <div className="p-4 border-b border-navy-600 bg-navy-700/50">
-                <p className="text-sm text-teal-400 italic">&ldquo;{quote}&rdquo;</p>
-              </div>
+            <div className="truncate text-sm font-semibold text-gray-900">
+              {displayName} — {t("page")} {page}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {localSrc && (
+              <a
+                href={localSrc}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-teal hover:text-teal"
+              >
+                <ExternalLink className="h-3.5 w-3.5" /> {t("openInNewTab")}
+              </a>
             )}
+            <button
+              onClick={onClose}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
+              aria-label={t("close")}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
 
-            {/* PDF Viewer */}
-            <div className="flex-1 overflow-auto p-4 flex items-start justify-center bg-navy-900">
-              {pdfError ? (
-                /* Error / Fallback card */
-                <div className="flex flex-col items-center justify-center p-8 text-center gap-4">
-                  <FileText className="w-12 h-12 text-text-muted" />
-                  <div>
-                    <p className="text-text-secondary text-sm font-medium mb-2">
-                      {pdfError === 'not_found'
-                        ? (locale === 'ar' ? 'المستند غير موجود' : 'Document not found')
-                        : (locale === 'ar' ? 'PDF غير متاح' : 'PDF unavailable')
-                      }
-                    </p>
-                    <p className="text-text-muted text-xs mb-4">
-                      {locale === 'ar'
-                        ? 'لا يمكن تحميل ملف PDF. يمكنك عرضه على GitHub بدلاً من ذلك.'
-                        : 'The PDF file could not be loaded. You can view it on GitHub instead.'
-                      }
-                    </p>
-                  </div>
-                  {mapping && (
-                    <a
-                      href={mapping.remotePath}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-teal-400/10 text-teal-400 rounded-lg text-sm font-medium hover:bg-teal-400/20 transition-colors"
-                    >
-                      {locale === 'ar' ? 'فتح على GitHub' : 'Open on GitHub'}
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-                  )}
-                </div>
-              ) : DocumentComponent && PageComponent && pdfUrl ? (
-                <DocumentComponent
-                  file={pdfUrl}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={onDocumentLoadError}
-                  loading={
-                    <div className="flex items-center justify-center p-8">
-                      <div className="animate-pulse text-text-secondary text-sm">{t('loading')}</div>
-                    </div>
-                  }
-                  error={
-                    <div className="flex flex-col items-center justify-center p-8 text-center gap-3">
-                      <p className="text-text-muted text-sm">
-                        {locale === 'ar' ? 'خطأ في تحميل PDF' : 'Error loading PDF'}
-                      </p>
-                      {mapping && (
-                        <a
-                          href={mapping.remotePath}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-2 px-3 py-1.5 bg-teal-400/10 text-teal-400 rounded-lg text-xs font-medium hover:bg-teal-400/20 transition-colors"
-                        >
-                          {locale === 'ar' ? 'فتح على GitHub' : 'Open on GitHub'}
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
-                      )}
-                    </div>
-                  }
+        <div className="flex-1 bg-gray-50">
+          {mapping && !failed ? (
+            <iframe
+              key={`${mapping.localPath}-${page}`}
+              src={localSrc || undefined}
+              className="h-full w-full"
+              title={displayName}
+              onError={() => setFailed(true)}
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+              <p className="text-sm text-gray-600">
+                {failed ? "Could not render the PDF inline." : "PDF mapping not found."}
+              </p>
+              {remoteSrc && (
+                <a
+                  href={remoteSrc}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full bg-teal px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-dark"
                 >
-                  <PageComponent
-                    pageNumber={pdfPage}
-                    width={350}
-                    className="mx-auto"
-                    renderTextLayer={false}
-                    renderAnnotationLayer={false}
-                  />
-                </DocumentComponent>
-              ) : (
-                <div className="flex items-center justify-center p-8">
-                  <div className="animate-pulse text-text-secondary text-sm">{t('loading')}</div>
-                </div>
+                  {t("openInNewTab")} ↗
+                </a>
               )}
             </div>
-
-            {/* Page navigation */}
-            {numPages && (
-              <div className="flex items-center justify-between p-4 border-t border-navy-600">
-                <button
-                  onClick={() => setPdfPage((p) => Math.max(1, p - 1))}
-                  disabled={pdfPage <= 1}
-                  className="p-2 rounded-md hover:bg-navy-700 text-text-secondary hover:text-text-primary disabled:opacity-30 transition-colors"
-                  aria-label="Previous page"
-                >
-                  {isRTL ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-                </button>
-                <span className="text-sm text-text-secondary">
-                  {t('page')} {pdfPage} / {numPages}
-                </span>
-                <button
-                  onClick={() => setPdfPage((p) => Math.min(numPages, p + 1))}
-                  disabled={pdfPage >= numPages}
-                  className="p-2 rounded-md hover:bg-navy-700 text-text-secondary hover:text-text-primary disabled:opacity-30 transition-colors"
-                  aria-label="Next page"
-                >
-                  {isRTL ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                </button>
-              </div>
-            )}
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

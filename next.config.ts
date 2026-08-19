@@ -1,19 +1,15 @@
-import createNextIntlPlugin from 'next-intl/plugin';
 import type { NextConfig } from "next";
 
-const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
-
 const nextConfig: NextConfig = {
-  output: "standalone",
-  typescript: {
-    ignoreBuildErrors: true,
+  reactStrictMode: true,
+  eslint: {
+    ignoreDuringBuilds: true,
   },
-  reactStrictMode: false,
-  // Webpack config for react-pdf / pdfjs-dist worker
-  webpack: (config) => {
-    config.resolve.alias.canvas = false;
-    return config;
+  outputFileTracingIncludes: {
+    "/api/**/*": ["./public/chunks.json", "./prisma/db/**"],
+    "/app/**/*": ["./prisma/db/**"],
+    "/**/*": ["./prisma/db/**"],
   },
 };
 
-export default withNextIntl(nextConfig);
+export default nextConfig;
